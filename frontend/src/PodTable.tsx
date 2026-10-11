@@ -22,13 +22,18 @@ export default function PodTable({ snapshot }: { snapshot: Snapshot }) {
             Individual Pods <span className="count">{filtered.length}</span>
           </h2>
           <p>
-            Active Pods on {snapshot.pool.name}, plus unscheduled Pods
+            Saved Pods on {snapshot.pool.name}, plus unscheduled Pods
             constrained to this pool.
           </p>
         </div>
         <ExportButtons
           table="pods"
-          query={{ pool_id: snapshot.pool.id, pod_search: search }}
+          query={{
+            pool_id: snapshot.pool.id,
+            snapshot_id: snapshot.id,
+            pod_search: search,
+            days: snapshot.usage.days,
+          }}
         />
       </div>
       <div className="table-toolbar">
@@ -45,7 +50,8 @@ export default function PodTable({ snapshot }: { snapshot: Snapshot }) {
           />
         </div>
         <span className="muted">
-          Effective Pod requests include init containers and overhead
+          Effective Pod requests include init containers and overhead · usage
+          follows the selected saved window
         </span>
       </div>
       <div className="table-wrap">
@@ -58,55 +64,130 @@ export default function PodTable({ snapshot }: { snapshot: Snapshot }) {
               <th>Status / restarts</th>
               <th>Requests</th>
               <th>Limits</th>
+              <th>Saved usage / p99</th>
               <th>Created</th>
               <th>Details</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((p) => (
-              <tr key={p.uid}>
-                <td>
-                  <strong className="mono">{p.name}</strong>
-                  <small>{p.namespace}</small>
-                </td>
-                <td>{p.workload.split("/").slice(1).join(" / ")}</td>
-                <td>
-                  <span className="mono">{p.node ?? "Unscheduled"}</span>
-                </td>
-                <td>
-                  <span
-                    className={`pill ${p.phase === "Running" ? "nonprod" : "production"}`}
-                  >
-                    {p.phase}
-                  </span>
-                  <small>
-                    {p.ready === false ? "Not ready · " : ""}
-                    {p.restarts} restarts
-                  </small>
-                </td>
-                <td>
-                  <strong>{cores(p.requested.cpu)}</strong>
-                  <small>{gib(p.requested.memory)}</small>
-                </td>
-                <td>
-                  <strong>{cores(p.limits.cpu)}</strong>
-                  <small>{gib(p.limits.memory)}</small>
-                </td>
-                <td>{date(p.created)}</td>
-                <td>
-                  <details>
-                    <summary>Pod specification</summary>
-                    <pre>
-                      {JSON.stringify(
-                        { uid: p.uid, labels: p.labels, spec: p.spec },
-                        null,
-                        2,
-                      )}
-                    </pre>
-                  </details>
-                </td>
-              </tr>
-            ))}
+            {rows.map((p) => {
+              const m = snapshot.usage.pods?.[p.uid];
+              return (
+                <tr key={p.uid}>
+                  <td>
+                    <strong className="mono">{p.name}</strong>
+                    <small>{p.namespace}</small>
+                  </td>
+                  <td>{p.workload.split("/").slice(1).join(" / ")}</td>
+                  <td>
+                    <span className="mono">{p.node ?? "Unscheduled"}</span>
+                  </td>
+                  <td>
+                    <span
+                      className={`pill ${p.phase === "Running" ? "nonprod" : "production"}`}
+                    >
+                      {p.phase}
+                    </span>
+                    <small>
+                      {p.ready === false ? "Not ready · " : ""}
+                      {p.restarts} restarts
+                    </small>
+                  </td>
+                  <td>
+                    <strong>{cores(p.requested.cpu)}</strong>
+                    <small>{gib(p.requested.memory)}</small>
+                  </td>
+                  <td>
+                    <strong>{cores(p.limits.cpu)}</strong>
+                    <small>{gib(p.limits.memory)}</small>
+                  </td>
+                  <td>
+                    <strong>
+                      {cores(m?.cpu_latest)} / {cores(m?.cpu_p99)}
+                    </strong>
+                    <small>
+                      {gib(m?.memory_latest)} / {gib(m?.memory_p99)}
+                    </small>
+                    <small>Latest / p99 · {snapshot.usage.days} days</small>
+                    <small>
+                      CPU at {date(m?.cpu_sample_at)} · memory at{" "}
+                      {date(m?.memory_sample_at)}
+                    </small>
+                  </td>
+                  <td>{date(p.created)}</td>
+                  <td>
+                    <details>
+                      <summary>Pod details</summary>
+                      <p>
+                        {p.status_available
+                          ? p.oom_killed
+                            ? "OOMKilled observed"
+                            : "Saved container status available"
+                          : "Container status not captured in this snapshot"}
+                      </p>
+                      <p>
+                        CPU samples: {m?.cpu_samples ?? 0} · memory samples:{" "}
+                        {m?.memory_samples ?? 0}. Coverage:{" "}
+                        {m?.cpu_coverage == null
+                          ? "unknown"
+                          : `${Math.round(m.cpu_coverage * 100)}% CPU`}{" "}
+                        /{" "}
+                        {m?.memory_coverage == null
+                          ? "unknown"
+                          : `${Math.round(m.memory_coverage * 100)}% memory`}
+                        . CPU throttling history is not collected.
+                      </p>
+                      <div className="table-wrap">
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>Container</th>
+                              <th>Requests</th>
+                              <th>Limits</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(p.containers ?? []).map((c) => (
+                              <tr key={`${c.kind}/${c.name}`}>
+                                <td>
+                                  {c.name}
+                                  <small>{c.kind}</small>
+                                </td>
+                                <td>
+                                  {cores(c.requested.cpu)}
+                                  <small>{gib(c.requested.memory)}</small>
+                                </td>
+                                <td>
+                                  {cores(c.limits.cpu)}
+                                  <small>{gib(c.limits.memory)}</small>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {(p.conditions ?? []).map((c) => (
+                        <p key={c.type}>
+                          {c.type}: {c.status} · {c.reason} {c.message}
+                        </p>
+                      ))}
+                      <pre>
+                        {JSON.stringify(
+                          {
+                            uid: p.uid,
+                            labels: p.labels,
+                            containers: p.containers,
+                            spec: p.spec,
+                          },
+                          null,
+                          2,
+                        )}
+                      </pre>
+                    </details>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

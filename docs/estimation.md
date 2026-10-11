@@ -10,7 +10,7 @@ Effective requests sum app containers, account for restartable init sidecars and
 
 ## Support matrix
 
-| Constraint | v0.1 behavior |
+| Constraint | v0.2.0 behavior |
 |---|---|
 | CPU, memory, Pod slots | Checked per eligible node |
 | Readiness and cordons | Unready/cordoned existing nodes excluded |
@@ -19,14 +19,16 @@ Effective requests sum app containers, account for restartable init sidecars and
 | Basic hard Pod affinity/anti-affinity | Saved cluster context + proposed replicas; namespace lists, selectors and topology labels; existing anti-affinity honored |
 | Preferred affinity | Preference omitted; feasibility does not guarantee scheduler scoring or selected node |
 | Namespace selectors/dynamic matchLabelKeys | Cannot fully assess |
-| Topology spread | Cannot fully assess |
+| Hard topology spread | Saved cluster context, proposed Pods and domain inclusion policies; dynamic label keys remain conditional |
+| Soft topology spread | Scheduler scoring omitted |
 | Bound/dynamic storage and CSI volumes | Cannot fully assess; binding, attachment and provisioner are not reproduced |
 | Custom scheduler/RuntimeClass/DRA | Cannot fully assess |
 | GPU, extended resources, ephemeral-storage, host ports | Cannot fully assess |
 | Basic requests CPU/memory and Pod quotas | Blocking check against saved used/hard values |
 | LimitRange/scoped/additional quotas | Cannot fully assess |
 | Mutating admission/injected sidecars | Cannot fully assess when potentially relevant or unavailable |
-| Rollout surge, failures, HPA maximum, preemption | Outside steady-state scenario scope |
+| HPA maximum and rollout surge | Explicit additional-demand envelope; percentage surge rounds up; peak is bounded |
+| Failures, rollout sequencing, terminating Pods, preemption | Outside scenario scope |
 
 Pending Pods constrained to this pool are placed before the proposed workload. Desired controller replicas not materialized as Pods are accounted separately without double counting. Competing demand that can use multiple pools is flagged as uncertain rather than silently assigned or ignored.
 
@@ -34,8 +36,14 @@ New node prototypes use conservative observed allocatable capacity for the pool 
 
 The algorithm tries bounded greedy placements. A successful assignment is feasible under these assumptions, not a guaranteed minimum or a promise about scheduler scoring. Search exhaustion or a failed arrangement involving placement interactions returns Cannot fully assess. An intrinsic resource shape/selector contradiction or an explicit quota violation can block placement. Adding more small nodes cannot accommodate a single Pod larger than every node's request budget.
 
+Steady mode uses the entered replica count. HPA mode uses an explicit maximum at least that count. Rollout mode adds integer or rounded-up percentage surge; combined mode adds surge to the HPA maximum. These are planning overrides for an additional service while existing Pods stay fixed, not a simulation of replacing an existing Deployment or automatic reading of its HPA/rollout configuration. Node cards show baseline and simulated requests, remaining ceilings, assignments, zone counts and reasons another proposed Pod cannot fit. Snapshot freshness and conditional evidence remain visible.
+
+Request recommendations use the selected saved window, independently highest-replica p99, configurable usage headroom and a sampled memory-peak floor. OOM/restart evidence prevents memory reductions; heterogeneous requests and missing/sparse coverage require review. Capacity deltas use actual selected replica requests. They do not establish monetary savings or produce per-container resource changes. Saved termination evidence covers captured current/last states, not complete historical OOM events; CPU throttling history is unavailable.
+
 ## Cost interpretation
 
 On-demand and three-year resource-CUD totals use saved matching USD prices, with components priced separately. Monthly values assume 730 hours. The commitment obligation is the covered eligible hourly price × 24 × 365 × 3; disks and other on-demand-only components are outside that obligation. Partial/missing commitment pricing is unavailable rather than a guessed percentage. A complete feasible placement is required before reporting total added-node cost.
+
+With no eligible components the CUD quote is **Not applicable**, and on-demand cost remains available. Missing eligible commitment prices are **Unavailable**. A valid zero quote is preserved.
 
 An estimate exceeding the configured autoscaler max still reports its feasible candidate node count and cost, with the configuration change clearly identified. The app never changes the pool, Pods, commitments or autoscaler.

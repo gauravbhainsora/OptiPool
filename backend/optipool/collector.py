@@ -2,15 +2,42 @@
 
 import base64
 import datetime as dt
+import json
 import os
+import re
 import tempfile
+import threading
 import time
+from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from urllib.parse import quote
 
 import google.auth
-from google.auth.transport.requests import AuthorizedSession
+from google.auth.transport.requests import AuthorizedSession, Request
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from .resources import node_eligible, pod_resources, quantity
+
+
+def parallel_reads(items, read):
+    # Bounded independent HTTP reads; pagination within one resource stays sequential.
+    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="cloud-read") as workers:
+        return list(workers.map(read, items))
+
+
+def metric_batches(names):
+    batch, length = [], 0
+    for name in names:
+        size = len(quote(json.dumps(re.escape(name)), safe="")) + 3
+        if batch and (len(batch) >= 100 or length + size > 3000):
+            yield batch
+            batch, length = [], 0
+        batch.append(name)
+        length += size
+    if batch:
+        yield batch
 
 
 def timestamp(value):
@@ -20,13 +47,34 @@ def timestamp(value):
 class CloudCollector:
     def __init__(self, settings):
         self.settings = settings
-        credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-        self.http = AuthorizedSession(credentials)
+        self.credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        self.sessions = threading.local()
+        self.credential_lock = threading.Lock()
+        self.request_slots = threading.BoundedSemaphore(4)
 
     def get(self, url, params=None, verify=True):
-        r = self.http.get(url, params=params, timeout=(10, 60), verify=verify)
-        r.raise_for_status()
-        return r.json()
+        if not getattr(self.sessions, "http", None):
+            self.sessions.http = AuthorizedSession(self.credentials)
+            self.sessions.http.mount(
+                "https://",
+                HTTPAdapter(
+                    max_retries=Retry(
+                        total=2,
+                        backoff_factor=0.5,
+                        status_forcelist=[429, 500, 502, 503, 504],
+                        allowed_methods={"GET"},
+                        respect_retry_after_header=True,
+                    )
+                ),
+            )
+        # Refresh ADC once before a concurrent batch; never share requests.Session across threads.
+        with self.credential_lock:
+            if not self.credentials.valid:
+                self.credentials.refresh(Request())
+        with self.request_slots:
+            r = self.sessions.http.get(url, params=params, timeout=(10, 60), verify=verify)
+            r.raise_for_status()
+            return r.json()
 
     def pages(self, url, field, params=None, verify=True, kubernetes=False):
         params = dict(params or {})
@@ -48,7 +96,9 @@ class CloudCollector:
             and (not self.settings.project_allowlist or p["projectId"] in self.settings.project_allowlist)
         ]
         pools, successful, errors = [], [], []
-        for project in projects:
+
+        def discover_project(project):
+            project_errors = []
             try:
                 data = self.get(
                     f"https://container.googleapis.com/v1/projects/{project}/locations/-/clusters"
@@ -58,16 +108,20 @@ class CloudCollector:
                 found = []
                 for c in data.get("clusters", []):
                     if c.get("autopilot", {}).get("enabled"):
-                        errors.append(
+                        project_errors.append(
                             {"scope": f"{project}/{c['name']}", "error": "Autopilot outside current scope"}
                         )
                         continue
                     for n in c.get("nodePools", []):
                         found.append(self.pool(project, c, n))
-                pools.extend(found)
-                successful.append(project)
+                return found, [project], project_errors
             except Exception as exc:
-                errors.append({"scope": project, "error": str(exc)[:500]})
+                return [], [], [{"scope": project, "error": str(exc)[:500]}]
+
+        for found, success, failures in parallel_reads(projects, discover_project):
+            pools.extend(found)
+            successful.extend(success)
+            errors.extend(failures)
         return pools, successful, errors
 
     def pool(self, project, cluster, pool):
@@ -136,10 +190,15 @@ class CloudCollector:
                 "jobs": "/apis/batch/v1/jobs",
                 "cronjobs": "/apis/batch/v1/cronjobs",
             }
-            raw = {
-                key: self.pages(base + path, "items", {"limit": 500}, ca_path, True)
-                for key, path in paths.items()
-            }
+            raw = dict(
+                parallel_reads(
+                    paths.items(),
+                    lambda item: (
+                        item[0],
+                        self.pages(base + item[1], "items", {"limit": 500}, ca_path, True),
+                    ),
+                )
+            )
             uncertainties = []
             try:
                 hooks = self.pages(
@@ -158,16 +217,25 @@ class CloudCollector:
         finally:
             os.unlink(ca_path)
         snapshot = normalize(pool, raw, uncertainties)
-        snapshot["metrics"] = self.metrics(pool, snapshot)
-        try:
-            snapshot["pricing"] = self.prices(pool)
-        except Exception as exc:
-            snapshot["pricing"] = {
-                "source": "Unavailable",
-                "saved_at": time.time(),
-                "components": [],
-                "error": str(exc)[:500],
-            }
+
+        def enrich(kind):
+            try:
+                return kind, self.metrics(pool, snapshot) if kind == "metrics" else self.prices(pool)
+            except Exception as exc:
+                missing = {"source": "Unavailable", "error": str(exc)[:500]}
+                if kind == "metrics":
+                    missing.update(
+                        cutoff=time.time(),
+                        samples=[],
+                        coverage="unavailable",
+                        memory_definition="Unavailable",
+                        warnings=[str(exc)[:500]],
+                    )
+                else:
+                    missing.update(saved_at=time.time(), components=[])
+                return kind, missing
+
+        snapshot.update(parallel_reads(["metrics", "pricing"], enrich))
         return snapshot
 
     def metrics(self, pool, snapshot):
@@ -182,23 +250,54 @@ class CloudCollector:
         }
         match = f'project_id="{pool["project"]}",location="{pool["location"]}",cluster="{pool["cluster"]}",container!="",container!="POD"'
         endpoint = f"https://monitoring.googleapis.com/v1/projects/{pool['project']}/location/global/prometheus/api/v1/query_range"
+        selected_names = {n["name"] for n in snapshot["nodes"]}
+        pods = {
+            (p["namespace"], p["name"]): p
+            for p in snapshot["context"]["pods"]
+            if p.get("workload") and p["node"] in selected_names
+        }
+        if not pods:
+            result["warnings"].append("No attributable Pods on the selected pool")
+            return result
         try:
-            queries = {
-                "cpu": f"sum by(namespace,pod)(rate(container_cpu_usage_seconds_total{{{match}}}[5m]))",
-                "memory": f"sum by(namespace,pod)(container_memory_working_set_bytes{{{match}}})",
-            }
-            series = {
-                k: self.get(endpoint, {"query": q, "start": now - 10 * 86400, "end": now, "step": 300})
-                for k, q in queries.items()
-            }
+            queries = []
+            names = defaultdict(list)
+            for namespace, name in pods:
+                names[namespace].append(name)
+            for namespace, members in names.items():
+                for batch in metric_batches(members):
+                    # Kubernetes names are DNS labels; escape regex and quote for PromQL separately.
+                    pattern = "|".join(re.escape(name) for name in batch)
+                    scoped = match + ",namespace=" + json.dumps(namespace) + ",pod=~" + json.dumps(pattern)
+                    queries.extend(
+                        [
+                            (
+                                "cpu",
+                                f"sum by(namespace,pod)(rate(container_cpu_usage_seconds_total{{{scoped}}}[5m]))",
+                            ),
+                            (
+                                "memory",
+                                f"sum by(namespace,pod)(container_memory_working_set_bytes{{{scoped}}})",
+                            ),
+                        ]
+                    )
+            responses = parallel_reads(
+                queries,
+                lambda item: (
+                    item[0],
+                    self.get(
+                        endpoint, {"query": item[1], "start": now - 10 * 86400, "end": now, "step": 300}
+                    ),
+                ),
+            )
+            series = {k: {"status": "success", "data": {"result": []}} for k in ["cpu", "memory"]}
+            for key, response in responses:
+                if response.get("status") != "success":
+                    raise ValueError("GMP query failed")
+                series[key]["data"]["result"].extend(response.get("data", {}).get("result", []))
             if all(s.get("status") == "success" and s.get("data", {}).get("result") for s in series.values()):
                 result.update(source="GMP cAdvisor", memory_definition="Working set", cadence_seconds=300)
                 values = {}
-                pods = {
-                    (p["namespace"], p["name"]): p
-                    for p in snapshot["context"]["pods"]
-                    if p.get("workload") and p["node"] in {n["name"] for n in snapshot["nodes"]}
-                }
                 for resource, response in series.items():
                     for s in response["data"]["result"]:
                         pod = pods.get((s["metric"].get("namespace"), s["metric"].get("pod")))
@@ -240,10 +339,11 @@ class CloudCollector:
             return dt.datetime.fromtimestamp(t, dt.UTC).isoformat()
 
         endpoint = f"https://monitoring.googleapis.com/v3/projects/{pool['project']}/timeSeries"
+        selected_names = {n["name"] for n in snapshot["nodes"]}
         pods = {
             (p["namespace"], p["name"]): p
             for p in snapshot["context"]["pods"]
-            if p.get("workload") and p["node"] in {n["name"] for n in snapshot["nodes"]}
+            if p.get("workload") and p["node"] in selected_names
         }
         values = {}
         for resource, metric, aligner in [
@@ -275,7 +375,7 @@ class CloudCollector:
                     continue
                 for p in s.get("points", []):
                     t = timestamp(p["interval"]["endTime"])
-                    if t < pod["created"]:
+                    if t < pod["created"] + (300 if resource == "cpu" else 0):
                         continue
                     item = values.setdefault(
                         (pod["uid"], t),
@@ -387,6 +487,11 @@ def normalize(pool, raw, uncertainties):
         )
     selected = [n for n in all_nodes if n["labels"].get("cloud.google.com/gke-nodepool") == pool["name"]]
     index = {n["name"]: n for n in all_nodes}
+    selected_names = {n["name"] for n in selected}
+    other_nodes = [n for n in all_nodes if n["name"] not in selected_names]
+    services_by_namespace = defaultdict(list)
+    for service in raw["services"]:
+        services_by_namespace[service["metadata"]["namespace"]].append(service)
     pods, pending, workloads = [], [], {}
     for p in raw["pods"]:
         if p["status"].get("phase") in {"Succeeded", "Failed"}:
@@ -405,6 +510,9 @@ def normalize(pool, raw, uncertainties):
             "labels": meta.get("labels", {}),
             "spec": spec,
             "phase": p["status"].get("phase", "Unknown"),
+            "conditions": p["status"].get("conditions", []),
+            "container_statuses": p["status"].get("containerStatuses", [])
+            + p["status"].get("initContainerStatuses", []),
             "restarts": sum(
                 c.get("restartCount", 0)
                 for c in p["status"].get("containerStatuses", [])
@@ -415,14 +523,15 @@ def normalize(pool, raw, uncertainties):
             ),
         }
         pods.append(item)
+        requests, limits = pod_resources(spec), pod_resources(spec, "limits")
         if node:
             node["pod_count"] += 1
             for field in ["requested", "limits"]:
-                req = pod_resources(spec, "requests" if field == "requested" else "limits")
+                req = requests if field == "requested" else limits
                 for k in req:
                     node[field][k] += req[k]
         if not node and any(node_eligible(n, spec) for n in selected):
-            if any(node_eligible(n, spec) for n in all_nodes if n not in selected):
+            if any(node_eligible(n, spec) for n in other_nodes):
                 uncertainties.append(
                     f"Pending {meta['namespace']}/{meta['name']} can compete across multiple pools"
                 )
@@ -440,7 +549,7 @@ def normalize(pool, raw, uncertainties):
                 "pending": 0,
                 "pool_replicas": 0,
                 "services": [],
-                "per_replica": pod_resources(spec),
+                "per_replica": requests,
                 "requested": {"cpu": 0.0, "memory": 0.0},
                 "limits": {"cpu": 0.0, "memory": 0.0},
                 "spec": spec,
@@ -448,12 +557,12 @@ def normalize(pool, raw, uncertainties):
         )
         w["running"] += int(item["phase"] == "Running")
         w["pending"] += int(item["phase"] == "Pending")
-        if node in selected:
+        if node and node["name"] in selected_names:
             w["pool_replicas"] += 1
             for k in ["cpu", "memory"]:
-                w["requested"][k] += pod_resources(spec)[k]
-                w["limits"][k] += pod_resources(spec, "limits")[k]
-            for service in raw["services"]:
+                w["requested"][k] += requests[k]
+                w["limits"][k] += limits[k]
+            for service in services_by_namespace[meta["namespace"]]:
                 sm = service["metadata"]
                 selector = service["spec"].get("selector", {})
                 if (
@@ -464,15 +573,16 @@ def normalize(pool, raw, uncertainties):
                     if sm["name"] not in w["services"]:
                         w["services"].append(sm["name"])
     # Include desired replicas not yet materialized as Pods, without double counting Pending Pods.
+    owner_counts = Counter(p["workload"] for p in pods)
     for deployment in raw["deployments"] + raw["statefulsets"]:
         meta, ds = deployment["metadata"], deployment["spec"]
         key = f"{meta['namespace']}/{deployment['kind']}/{meta['name']}"
         template = ds["template"]
         spec = template["spec"]
-        existing = sum(p["workload"] == key for p in pods)
+        existing = owner_counts[key]
         missing = max(0, ds.get("replicas", 1) - existing)
         if missing and any(node_eligible(n, spec) for n in selected):
-            if any(node_eligible(n, spec) for n in all_nodes if n not in selected):
+            if any(node_eligible(n, spec) for n in other_nodes):
                 uncertainties.append(
                     f"Unmaterialized desired replicas for {key} can compete across multiple pools"
                 )

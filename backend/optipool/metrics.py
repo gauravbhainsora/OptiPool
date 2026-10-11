@@ -14,24 +14,19 @@ def percentile(values, p=0.99):
 def summarize(snapshot, days, minimum=20):
     cutoff = snapshot["metrics"]["cutoff"]
     start = cutoff - days * 86400
-    samples = snapshot["metrics"].get("samples", [])
-    replicas = defaultdict(lambda: {"cpu": [], "memory": [], "times": set()})
+    cadence = snapshot["metrics"].get("cadence_seconds")
+    observed = {p["uid"]: p for p in snapshot.get("context", {}).get("pods", [])}
+    replicas = defaultdict(dict)
+    for sample in snapshot["metrics"].get("samples", []):
+        if start <= sample["time"] <= cutoff and sample.get("attributed"):
+            point = replicas[(sample["workload"], sample["replica"])].setdefault(sample["time"], {})
+            for resource in ["cpu", "memory"]:
+                value = sample.get(resource)
+                if value is not None and math.isfinite(value) and value >= 0:
+                    point[resource] = value
+    workloads, pod_metrics = {}, {}
     timeline = defaultdict(lambda: {"cpu": None, "memory": None})
-    for sample in samples:
-        if not start <= sample["time"] <= cutoff:
-            continue
-        # A sample is emitted only with evidence of workload and selected-pool membership.
-        if not sample.get("attributed"):
-            continue
-        r = replicas[(sample["workload"], sample["replica"])]
-        r["times"].add(sample["time"])
-        for k in ["cpu", "memory"]:
-            value = sample.get(k)
-            if value is not None and math.isfinite(value):
-                r[k].append(value)
-                timeline[sample["time"]][k] = (timeline[sample["time"]][k] or 0) + value
-    workloads = {}
-    for (workload, replica), data in replicas.items():
+    for (workload, replica), points in replicas.items():
         target = workloads.setdefault(
             workload,
             {
@@ -44,20 +39,42 @@ def summarize(snapshot, days, minimum=20):
             },
         )
         target["replicas_observed"] += 1
-        target["samples"] += len(data["times"])
-        for k in ["cpu", "memory"]:
-            value = percentile(data[k]) if len(data[k]) >= minimum else None
-            if value is not None and (target[k + "_p99"] is None or value > target[k + "_p99"]):
-                target[k + "_p99"], target[k + "_replica"] = value, replica
+        target["samples"] += len(points)
+        created = observed.get(replica, {}).get("created") or start
+        expected = max(1, int((cutoff - max(start, created)) / cadence) + 1) if cadence else None
+        metric = {
+            "workload": workload,
+            "samples": len(points),
+            "last_sample_at": max(points),
+            "expected_samples": expected,
+        }
+        for resource in ["cpu", "memory"]:
+            values = [p[resource] for p in points.values() if resource in p]
+            metric[resource + "_samples"] = len(values)
+            metric[resource + "_coverage"] = min(1, len(values) / expected) if expected else None
+            metric[resource + "_p99"] = percentile(values) if len(values) >= minimum else None
+            metric[resource + "_peak"] = max(values) if values else None
+            latest = max((t for t, p in points.items() if resource in p), default=None)
+            metric[resource + "_latest"] = points[latest][resource] if latest is not None else None
+            metric[resource + "_sample_at"] = latest
+            p99 = metric[resource + "_p99"]
+            if p99 is not None and (target[resource + "_p99"] is None or p99 > target[resource + "_p99"]):
+                target[resource + "_p99"], target[resource + "_replica"] = p99, replica
+            for t, point in points.items():
+                if resource in point:
+                    timeline[t][resource] = (timeline[t][resource] or 0) + point[resource]
+        pod_metrics[replica] = metric
     return {
         "days": days,
         "start": start,
         "cutoff": cutoff,
         "workloads": workloads,
+        "pods": pod_metrics,
         "timeline": [{"time": t, **v} for t, v in sorted(timeline.items())],
         "source": snapshot["metrics"].get("source", "Unavailable"),
         "memory_definition": snapshot["metrics"].get("memory_definition", "Unavailable"),
         "coverage": snapshot["metrics"].get("coverage", "unavailable"),
+        "cadence_seconds": cadence,
         "minimum_samples": minimum,
         "warnings": snapshot["metrics"].get("warnings", []),
     }

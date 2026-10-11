@@ -12,13 +12,20 @@ def iso(value):
     return datetime.fromtimestamp(value, UTC).isoformat() if value else "Not fetched"
 
 
-def pool_rows(inventory, snapshots):
+def pool_rows(inventory, snapshots=None):
     rows = []
     for pool in inventory:
-        s = snapshots.get(pool["id"])
-        pool = {**pool, **(s["pool"] if s else {}), "available": pool["available"]}
-        nodes = s["nodes"] if s else []
-        factor = 0.8 if pool["environment"] == "production" else 0.9
+        saved = (snapshots or {}).get(pool["id"])
+        summary = pool.get("snapshot_summary")
+        if saved:
+            from .store import overview
+
+            summary = overview(saved)["summary"]
+        pool = {
+            **pool,
+            **(saved["pool"] if saved else pool.get("snapshot_pool", {})),
+            "available": pool["available"],
+        }
         rows.append(
             {
                 "Project": pool["project"],
@@ -28,23 +35,16 @@ def pool_rows(inventory, snapshots):
                 "Location": pool["location"],
                 "Machine type": pool["machine_type"],
                 "Available": pool["available"],
-                "Nodes": len(nodes) if s else "Unknown",
+                "Nodes": summary["node_count"] if summary else "Unknown",
                 "Autoscaler min": pool["autoscaler_min"],
                 "Autoscaler max": pool["autoscaler_max"],
-                "Allocatable CPU cores": sum(n["allocatable"]["cpu"] for n in nodes) if s else None,
-                "Requested CPU cores": sum(n["requested"]["cpu"] for n in nodes) if s else None,
-                "Allocatable memory GiB": sum(n["allocatable"]["memory"] for n in nodes) / 1024**3
-                if s
-                else None,
-                "Requested memory GiB": sum(n["requested"]["memory"] for n in nodes) / 1024**3 if s else None,
-                "Policy violations": sum(
-                    any(n["requested"][k] > n["allocatable"][k] * factor for k in ["cpu", "memory"])
-                    for n in nodes
-                )
-                if s
-                else None,
-                "Snapshot UTC": iso(s["saved_at"]) if s else "Not fetched",
-                "Snapshot ID": s["id"] if s else "",
+                "Allocatable CPU cores": summary["cpu_allocatable"] if summary else None,
+                "Requested CPU cores": summary["cpu"] if summary else None,
+                "Allocatable memory GiB": summary["memory_allocatable"] / 1024**3 if summary else None,
+                "Requested memory GiB": summary["memory"] / 1024**3 if summary else None,
+                "Policy violations": summary["violations"] if summary else None,
+                "Snapshot UTC": iso(saved["saved_at"] if saved else pool.get("snapshot_at")),
+                "Snapshot ID": saved["id"] if saved else pool.get("snapshot_id") or "",
                 "Synthetic": pool.get("synthetic", False),
             }
         )
@@ -89,9 +89,10 @@ def workload_rows(snapshot, usage):
     return rows
 
 
-def pod_rows(snapshot, search=""):
+def pod_rows(snapshot, search="", usage=None):
     rows = []
     for p in selected_pods(snapshot):
+        metric = (usage or {}).get("pods", {}).get(p["uid"], {})
         if (
             search
             and search.lower() not in f"{p['name']} {p['namespace']} {p['workload']} {p['node']}".lower()
@@ -114,6 +115,21 @@ def pod_rows(snapshot, search=""):
                 "Memory request GiB": p["requested"]["memory"] / 1024**3,
                 "CPU limit cores": p["limits"]["cpu"],
                 "Memory limit GiB": p["limits"]["memory"] / 1024**3,
+                "Window days": (usage or {}).get("days"),
+                "CPU latest cores": metric.get("cpu_latest"),
+                "Memory latest GiB": metric["memory_latest"] / 1024**3
+                if metric.get("memory_latest") is not None
+                else None,
+                "CPU p99 cores": metric.get("cpu_p99"),
+                "Memory p99 GiB": metric["memory_p99"] / 1024**3
+                if metric.get("memory_p99") is not None
+                else None,
+                "CPU sample UTC": iso(metric.get("cpu_sample_at")),
+                "Memory sample UTC": iso(metric.get("memory_sample_at")),
+                "CPU sample coverage": metric.get("cpu_coverage"),
+                "Memory sample coverage": metric.get("memory_coverage"),
+                "OOMKilled observed": p["oom_killed"] if p["status_available"] else None,
+                "Status captured": p["status_available"],
                 "Created UTC": iso(p["created"]),
                 "Snapshot UTC": iso(snapshot["saved_at"]),
                 "Snapshot ID": snapshot["id"],

@@ -52,6 +52,7 @@ export type Metric = {
   replicas_observed: number;
 };
 export type Usage = {
+  pods: Record<string, PodMetric>;
   days: number;
   cutoff: number;
   start: number;
@@ -76,6 +77,21 @@ export type Snapshot = {
 };
 
 export type Pod = {
+  conditions: {
+    type: string;
+    status: string;
+    reason?: string;
+    message?: string;
+  }[];
+  status_available: boolean;
+  oom_killed: boolean;
+  containers: {
+    name: string;
+    kind: string;
+    requested: Resources;
+    limits: Resources;
+    status: Record<string, unknown> | null;
+  }[];
   name: string;
   namespace: string;
   uid: string;
@@ -97,6 +113,8 @@ export type Job = {
   scope: string;
 };
 export type Cost = {
+  cud_status?: "available" | "not_applicable" | "unavailable";
+  cud_reason?: string | null;
   available: boolean;
   reason?: string;
   source?: string;
@@ -109,6 +127,16 @@ export type Cost = {
   assumption?: string;
 };
 export type Estimate = {
+  planning?: {
+    mode: string;
+    steady_replicas: number;
+    hpa_replicas: number;
+    surge_replicas: number;
+    peak_replicas: number;
+  };
+  confidence?: { status: string; stale: boolean; snapshot_age_seconds: number };
+  node_budgets?: NodeBudget[];
+  zone_distribution?: Record<string, number>;
   target_pool?: Pick<
     Pool,
     "id" | "name" | "cluster" | "project" | "environment"
@@ -132,5 +160,59 @@ export type Estimate = {
     node: string;
     zone: string;
     existing_demand: boolean;
+  }[];
+};
+
+export type PodMetric = {
+  cpu_p99: number | null;
+  memory_p99: number | null;
+  cpu_latest: number | null;
+  memory_latest: number | null;
+  cpu_sample_at: number | null;
+  memory_sample_at: number | null;
+  cpu_coverage: number | null;
+  memory_coverage: number | null;
+  cpu_samples: number;
+  memory_samples: number;
+  memory_peak: number | null;
+  last_sample_at: number;
+};
+export type NodeBudget = {
+  name: string;
+  zone: string;
+  planned: boolean;
+  before: Resources;
+  after: Resources;
+  allocatable: Resources;
+  ceiling: Resources;
+  remaining: Resources;
+  placements: string[];
+  rejections: string[];
+};
+export type Recommendation = {
+  workload_id: string;
+  name: string;
+  namespace: string;
+  current: Resources;
+  proposed: { cpu: number | null; memory: number | null };
+  recovered: { cpu: number | null; memory: number | null };
+  cpu_p99: number | null;
+  memory_p99: number | null;
+  coverage: number | null;
+  pool_replicas: number;
+  status: string;
+  warnings: string[];
+};
+export type Comparison = {
+  before: { id: string; saved_at: number };
+  after: { id: string; saved_at: number };
+  delta: { nodes: number; pods: number; cpu: number; memory: number };
+  changes: {
+    entity: string;
+    name: string;
+    namespace?: string;
+    id: string;
+    change: string;
+    fields: Record<string, { before: unknown; after: unknown }>;
   }[];
 };

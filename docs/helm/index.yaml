@@ -2,8 +2,21 @@ apiVersion: v1
 entries:
   optipool:
   - apiVersion: v2
+    appVersion: 0.2.0
+    created: '2026-10-12T01:09:34.699512+05:30'
+    description: Saved GKE node-pool observations and conservative capacity planning
+    digest: 4fffdebf28d4ba6bd015fd1bbbcbdffb7d2cfbd26c31fbbc54fa7da331332730
+    home: https://github.com/gauravbhainsora/OptiPool
+    name: optipool
+    sources:
+    - https://github.com/gauravbhainsora/OptiPool
+    type: application
+    urls:
+    - https://raw.githubusercontent.com/gauravbhainsora/OptiPool/v0.2.0/docs/helm/optipool-0.2.0.tgz
+    version: 0.2.0
+  - apiVersion: v2
     appVersion: 0.1.0
-    created: "2026-10-12T00:21:36.166023+05:30"
+    created: '2026-10-12T01:09:34.699199+05:30'
     description: Saved GKE node-pool observations and conservative capacity planning
     digest: 13791f414e33176ee08060db50a73fd6c4047582b5d4741704d088e96479a309
     home: https://github.com/gauravbhainsora/OptiPool
@@ -14,4 +27,4 @@ entries:
     urls:
     - https://raw.githubusercontent.com/gauravbhainsora/OptiPool/v0.1.0/docs/helm/optipool-0.1.0.tgz
     version: 0.1.0
-generated: "2026-10-12T00:21:36.165658+05:30"
+generated: '2026-10-12T01:09:34.698587+05:30'

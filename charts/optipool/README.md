@@ -1,21 +1,21 @@
 # OptiPool chart
 
-Chart 0.1.0 deploys app 0.1.0. See [deployment](../../docs/deployment.md), [local install tests](../../docs/testing.md) and [backup/restore](../../docs/operations.md).
+Chart 0.2.0 deploys app 0.2.0. See [deployment](../../docs/deployment.md), [local install tests](../../docs/testing.md) and [backup/restore](../../docs/operations.md).
 
 Download the published package without cloning this repository:
 
 ```bash
 helm repo add optipool https://raw.githubusercontent.com/gauravbhainsora/OptiPool/main/docs/helm
 helm repo update
-helm pull optipool/optipool --version 0.1.0
+helm pull optipool/optipool --version 0.2.0
 ```
 
-The index points to a version-tagged archive and includes its SHA256 digest. Container images use `ghcr.io/gauravbhainsora/optipool:0.1.0`. A newly published GHCR image starts private; the owner must change its package visibility to public for anonymous image pulls, or configure `imagePullSecrets`. You can also build and use your own registry image. Chart downloads are public regardless of image visibility.
+The index points to a version-tagged archive and includes its SHA256 digest. Container images use `ghcr.io/gauravbhainsora/optipool:0.2.0`; the existing OptiPool package is public. A newly created GHCR package may need an owner visibility change for anonymous pulls, or `imagePullSecrets` for private access. You can also build and use your own registry image. Chart downloads are public regardless of image visibility.
 
 | Value | Default |
 |---|---|
 | `replicaCount` | 1, enforced by schema and template |
-| `image.repository` / `tag` / `digest` | `ghcr.io/gauravbhainsora/optipool` / `0.1.0` / optional immutable SHA256 |
+| `image.repository` / `tag` / `digest` | `ghcr.io/gauravbhainsora/optipool` / `0.2.0` / optional immutable SHA256 |
 | `config.mode` / `auth_mode` | Private synthetic demo / local |
 | `config.project_allowlist` | Empty = dynamic collector project discovery |
 | `config.environment` | Explicit hierarchy; defaults to production |

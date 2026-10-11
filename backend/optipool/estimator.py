@@ -1,12 +1,20 @@
 """Conservative, bounded greedy placement. A found placement is not proof of a minimum."""
 
+import math
+import re
+import time
+from collections import defaultdict
 from copy import deepcopy
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field
 
+from .manifests import mapping, selector
+from .manifests import pod_spec as validate_pod_spec
 from .pricing import cost
 from .resources import node_eligible, pod_resources, quantity, selector_matches
+from .topology import spread_ok
 
 
 class Scenario(BaseModel):
@@ -16,6 +24,33 @@ class Scenario(BaseModel):
     memory: str = "256Mi"
     replicas: int = Field(default=3, ge=0, le=2000)
     manifest: str = Field(default="", max_length=200_000)
+    planning_mode: Literal["steady", "hpa", "rollout", "combined"] = "steady"
+    hpa_max_replicas: int | None = Field(default=None, ge=0, le=2000)
+    max_surge: str = Field(default="25%", max_length=10)
+    spread_zones: bool = False
+
+    def planning(self, replicas):
+        peak = replicas
+        if self.planning_mode in {"hpa", "combined"}:
+            if self.hpa_max_replicas is None or self.hpa_max_replicas < replicas:
+                raise ValueError("HPA maximum must be at least the requested replica count")
+            peak = self.hpa_max_replicas
+        surge = 0
+        if self.planning_mode in {"rollout", "combined"}:
+            if not re.fullmatch(r"\d+%?", self.max_surge):
+                raise ValueError("Max surge must be a nonnegative integer or percentage")
+            surge = (
+                math.ceil(peak * int(self.max_surge[:-1]) / 100)
+                if self.max_surge.endswith("%")
+                else int(self.max_surge)
+            )
+        return {
+            "mode": self.planning_mode,
+            "steady_replicas": replicas,
+            "hpa_replicas": peak,
+            "surge_replicas": surge,
+            "peak_replicas": peak + surge,
+        }
 
     def pod(self):
         if not self.manifest.strip():
@@ -33,37 +68,24 @@ class Scenario(BaseModel):
             raise ValueError(f"Invalid Deployment YAML: {exc}") from None
         if not isinstance(obj, dict) or obj.get("kind") != "Deployment" or obj.get("apiVersion") != "apps/v1":
             raise ValueError("Advanced input must be one apps/v1 Deployment")
-        spec = obj["spec"]
-        pod = spec["template"]["spec"]
-        if not isinstance(pod, dict) or not isinstance(pod.get("containers"), list):
-            raise ValueError("Deployment template requires a Pod spec and container list")
-        for key in ["affinity", "nodeSelector", "overhead", "resources"]:
-            if pod.get(key) is None:
-                pod.pop(key, None)
-        if not pod.get("containers"):
-            raise ValueError("Deployment must have containers")
-        for c in pod["containers"] + (pod.get("initContainers") or []):
-            if not isinstance(c, dict) or not c.get("name"):
-                raise ValueError("Each container requires a name")
-            requests, limits = (
-                c.get("resources", {}).get("requests", {}),
-                c.get("resources", {}).get("limits", {}),
-            )
-            if any(
-                k in requests and quantity(requests[k]) > quantity(limits[k])
-                for k in ["cpu", "memory"]
-                if k in limits
-            ):
-                raise ValueError("Container request cannot exceed its configured limit")
-        labels = spec["template"].get("metadata", {}).get("labels", {})
-        if not spec.get("selector") or not selector_matches(labels, spec["selector"]):
+        spec = mapping(obj.get("spec"), "spec")
+        template = mapping(spec.get("template"), "spec.template")
+        pod = validate_pod_spec(template.get("spec"))
+        metadata = mapping(template.get("metadata"), "spec.template.metadata", optional=True)
+        labels = mapping(metadata.get("labels"), "template labels", optional=True)
+        if not spec.get("selector") or not selector_matches(
+            labels, selector(spec["selector"], "spec.selector")
+        ):
             raise ValueError("Deployment requires a selector matching its template labels")
         replicas = int(spec.get("replicas", self.replicas))
         if replicas < 0 or replicas > 2000:
             raise ValueError("replicas must be between 0 and 2000")
-        if obj.get("metadata", {}).get("namespace", self.namespace) != self.namespace:
+        if (
+            mapping(obj.get("metadata"), "metadata", optional=True).get("namespace", self.namespace)
+            != self.namespace
+        ):
             raise ValueError("Manifest namespace must match target namespace")
-        return pod, spec["template"].get("metadata", {}).get("labels", {}), replicas
+        return pod, labels, replicas
 
 
 def unsupported(spec):
@@ -71,12 +93,20 @@ def unsupported(spec):
     if spec.get("schedulerName", "default-scheduler") != "default-scheduler":
         reasons.append("Custom scheduler cannot be reproduced")
     for key, label in [
-        ("topologySpreadConstraints", "Topology spread simulation"),
         ("runtimeClassName", "RuntimeClass admission overhead"),
         ("resourceClaims", "Dynamic resource allocation"),
     ]:
         if spec.get(key):
             reasons.append(label + " requires validation outside this simulator")
+    for term in spec.get("topologySpreadConstraints") or []:
+        if (
+            term.get("matchLabelKeys")
+            or term.get("nodeAffinityPolicy", "Honor") not in {"Honor", "Ignore"}
+            or term.get("nodeTaintsPolicy", "Ignore") not in {"Honor", "Ignore"}
+        ):
+            reasons.append(
+                "Dynamic topology spread label keys or unknown inclusion policies need external validation"
+            )
     if any("persistentVolumeClaim" in v or "ephemeral" in v or "csi" in v for v in spec.get("volumes", [])):
         reasons.append("Storage binding, attachment and topology require external validation")
     if any(c.get("ports") and any(p.get("hostPort") for p in c["ports"]) for c in spec.get("containers", [])):
@@ -152,11 +182,25 @@ def affinity_ok(node, spec, labels, namespace, pods, nodes):
     return True
 
 
-def estimate(snapshot, scenario: Scenario, max_added=100):
+def estimate(snapshot, scenario: Scenario, max_added=100, max_replicas=2000):
     spec, labels, replicas = scenario.pod()
+    planning = scenario.planning(replicas)
+    replicas = planning["peak_replicas"]
+    if replicas > max_replicas:
+        raise ValueError("Peak replicas exceed the configured simulation bound")
+    if scenario.spread_zones:
+        spec.setdefault("topologySpreadConstraints", []).append(
+            {
+                "maxSkew": 1,
+                "topologyKey": "topology.kubernetes.io/zone",
+                "whenUnsatisfiable": "DoNotSchedule",
+                "labelSelector": {"matchLabels": labels},
+            }
+        )
     request = pod_resources(spec)
     nodes = deepcopy(snapshot["nodes"])
-    pods = deepcopy(snapshot.get("context", {}).get("pods", []))
+    # Existing Pod records are read-only; only the placement list receives new entries.
+    pods = list(snapshot.get("context", {}).get("pods", []))
     factor = 0.8 if snapshot["pool"]["environment"] == "production" else 0.9
     warnings = list(dict.fromkeys(unsupported(spec) + snapshot.get("context", {}).get("uncertainties", [])))
     violations = [
@@ -171,10 +215,18 @@ def estimate(snapshot, scenario: Scenario, max_added=100):
         "policy_factor": factor,
         "per_replica": request,
         "replicas": replicas,
+        "planning": planning,
+        "confidence": {
+            "status": "Conditional" if warnings else "Snapshot-based",
+            "snapshot_age_seconds": max(0, time.time() - snapshot["saved_at"]),
+            "stale": time.time() - snapshot["saved_at"] > 86400,
+            "metrics_used_for_placement": False,
+        },
         "violations": violations,
         "warnings": warnings,
         "assumptions": [
-            "Existing Pods remain fixed; no preemption or rollout surge",
+            "Existing Pods remain fixed; this is additional demand, not replacement of an existing workload",
+            "Peak replicas include the selected HPA cap and rollout surge; terminating Pods and rollout sequencing are not modeled",
             "Bounded greedy placement; a feasible result is not a proven minimum",
             "New nodes use saved observed allocatable capacity and conservative DaemonSet overhead",
         ],
@@ -227,18 +279,47 @@ def estimate(snapshot, scenario: Scenario, max_added=100):
     demand += [(spec, labels, namespace, f"{scenario.name}-{i + 1}") for i in range(replicas)]
     added, placements = [], []
     templates = snapshot.get("node_templates", [])
+    request_cache = {id(spec): request}
+
+    def effective(pod_spec):
+        key = id(pod_spec)
+        if key not in request_cache:
+            request_cache[key] = pod_resources(pod_spec)
+        return request_cache[key]
+
+    def rejection_reasons(n, pod_spec, pod_labels, ns):
+        req = effective(pod_spec)
+        reasons = []
+        if not n["ready"]:
+            reasons.append("Node is not Ready")
+        if n.get("unschedulable"):
+            reasons.append("Node is cordoned")
+        check = {**n, "ready": True, "unschedulable": False}
+        if not node_eligible({**check, "taints": []}, pod_spec):
+            reasons.append("Node name, selector or required node affinity does not match")
+        if not node_eligible(check, {"tolerations": pod_spec.get("tolerations", [])}):
+            reasons.append("Untolerated NoSchedule/NoExecute taint")
+        if n["pod_count"] >= n["allocatable"].get("pods", 110):
+            reasons.append("Pod slots exhausted")
+        for k in ["cpu", "memory"]:
+            if n["requested"][k] + req[k] > n["allocatable"][k] * factor + 1e-9:
+                reasons.append(k.upper() + " request ceiling exceeded")
+        context_nodes = snapshot.get("context", {}).get("nodes", []) + nodes
+        if not affinity_ok(n, pod_spec, pod_labels, ns, pods, context_nodes):
+            reasons.append("Required Pod affinity/anti-affinity")
+        if not spread_ok(n, pod_spec, pod_labels, ns, pods, context_nodes):
+            reasons.append("Hard topology spread constraint")
+        return reasons
 
     def can_place(n, pod_spec, pod_labels, ns):
-        req = pod_resources(pod_spec)
-        return (
-            node_eligible(n, pod_spec)
-            and n["pod_count"] < n["allocatable"].get("pods", 110)
-            and all(
-                n["requested"][k] + req[k] <= n["allocatable"][k] * factor + 1e-9 for k in ["cpu", "memory"]
-            )
-            and affinity_ok(
-                n, pod_spec, pod_labels, ns, pods, snapshot.get("context", {}).get("nodes", []) + nodes
-            )
+        req = effective(pod_spec)
+        if not node_eligible(n, pod_spec) or n["pod_count"] >= n["allocatable"].get("pods", 110):
+            return False
+        if any(n["requested"][k] + req[k] > n["allocatable"][k] * factor + 1e-9 for k in ["cpu", "memory"]):
+            return False
+        context_nodes = snapshot.get("context", {}).get("nodes", []) + nodes
+        return affinity_ok(n, pod_spec, pod_labels, ns, pods, context_nodes) and spread_ok(
+            n, pod_spec, pod_labels, ns, pods, context_nodes
         )
 
     reason = None
@@ -263,7 +344,7 @@ def estimate(snapshot, scenario: Scenario, max_added=100):
             )
             if not templates:
                 warnings.append("No verified allocatable template for new nodes")
-            req = pod_resources(pod_spec)
+            req = effective(pod_spec)
             if any(
                 node_eligible(n, pod_spec)
                 and all(req[k] <= n["allocatable"][k] * factor for k in ["cpu", "memory"])
@@ -277,7 +358,7 @@ def estimate(snapshot, scenario: Scenario, max_added=100):
         chosen = min(
             eligible, key=lambda n: sum(n["allocatable"][k] * factor - n["requested"][k] for k in ["cpu"])
         )
-        req = pod_resources(pod_spec)
+        req = effective(pod_spec)
         for k in ["cpu", "memory"]:
             chosen["requested"][k] += req[k]
         chosen["pod_count"] += 1
@@ -307,6 +388,28 @@ def estimate(snapshot, scenario: Scenario, max_added=100):
         if added
         else "Fits"
     )
+    before = {n["name"]: n for n in snapshot["nodes"]}
+    by_node, by_zone = defaultdict(list), defaultdict(int)
+    for placement in placements:
+        by_node[placement["node"]].append(placement["replica"])
+        by_zone[placement["zone"]] += int(not placement["existing_demand"])
+    node_budgets = [
+        {
+            "name": n["name"],
+            "zone": n["zone"],
+            "planned": n["name"] not in before,
+            "allocatable": n["allocatable"],
+            "ceiling": {k: n["allocatable"][k] * factor for k in ["cpu", "memory"]},
+            "before": before.get(n["name"], next((t for t in templates if t["zone"] == n["zone"]), n))[
+                "requested"
+            ],
+            "after": n["requested"],
+            "remaining": {k: n["allocatable"][k] * factor - n["requested"][k] for k in ["cpu", "memory"]},
+            "placements": by_node[n["name"]],
+            "rejections": rejection_reasons(n, spec, labels, namespace),
+        }
+        for n in nodes
+    ]
     return {
         **baseline,
         "warnings": sorted(set(warnings)),
@@ -323,6 +426,9 @@ def estimate(snapshot, scenario: Scenario, max_added=100):
         "exceeds_autoscaler_max": not reason and len(added) > permitted,
         "pending_replicas_accounted": len(pending),
         "placements": placements,
+        "node_budgets": node_budgets,
+        "zone_distribution": {zone: by_zone[zone] for zone in sorted({n["zone"] for n in nodes})},
+        "confidence": {**baseline["confidence"], "status": "Conditional" if uncertain else "Snapshot-based"},
         "cost": cost(snapshot.get("pricing"), len(added))
         if not reason
         else {"available": False, "reason": "A complete feasible placement was not found"},

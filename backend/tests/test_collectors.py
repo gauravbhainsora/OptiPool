@@ -1,7 +1,7 @@
 from copy import deepcopy
 
 import pytest
-from optipool.collector import CloudCollector, normalize
+from optipool.collector import CloudCollector, metric_batches, normalize, parallel_reads
 
 
 def raw_fixture():
@@ -244,3 +244,108 @@ def test_gmp_attribution_ignores_prior_same_name_pod(saved, settings):
     assert len(metrics["samples"]) == 1
     assert metrics["samples"][0]["cpu"] == 0.2
     assert "partial" in metrics["coverage"]
+
+
+def test_independent_reads_overlap_with_four_worker_bound():
+    import threading
+    import time
+
+    lock = threading.Lock()
+    active, maximum = 0, 0
+
+    def read(value):
+        nonlocal active, maximum
+        with lock:
+            active += 1
+            maximum = max(maximum, active)
+        time.sleep(0.01)
+        with lock:
+            active -= 1
+        return value
+
+    assert parallel_reads(range(15), read) == list(range(15))
+    assert 1 < maximum <= 4
+
+
+def test_gmp_queries_only_selected_pool_pods(saved, settings):
+    import re
+
+    collector = object.__new__(CloudCollector)
+    collector.settings = settings
+    selected = saved["context"]["pods"][0]
+    other = deepcopy(selected)
+    other.update(name="foreign-pod", uid="foreign", node="foreign-node")
+    saved["context"]["pods"].append(other)
+    queries = []
+
+    def get(url, params=None, verify=True):
+        queries.append(params["query"])
+        return {
+            "status": "success",
+            "data": {
+                "result": [
+                    {
+                        "metric": {"namespace": selected["namespace"], "pod": selected["name"]},
+                        "values": [[saved["metrics"]["cutoff"], "0.2"]],
+                    }
+                ]
+            },
+        }
+
+    collector.get = get
+    result = collector.metrics(saved["pool"], saved)
+    assert result["samples"] and len(queries) == 2
+    escaped_name = re.escape(selected["name"]).replace("\\", "\\\\")
+    assert all("pod=~" in q and escaped_name in q and "foreign-pod" not in q for q in queries)
+
+
+def test_optional_enrichment_overlaps_and_failure_keeps_complete_core(saved, settings):
+    import threading
+
+    collector = object.__new__(CloudCollector)
+    collector.settings = settings
+    settings.default_environment = "nonproduction"
+    pool = saved["pool"]
+    raw = raw_fixture()
+    collector.get = lambda *args, **kwargs: {
+        "name": pool["cluster"],
+        "location": pool["location"],
+        "locations": pool["locations"],
+        "endpoint": "127.0.0.1",
+        "masterAuth": {"clusterCaCertificate": "Y2E="},
+        "nodePools": [{"name": pool["name"], "config": {}}],
+    }
+    collector.pages = lambda url, *args, **kwargs: raw.get(
+        url.rsplit("/", 1)[-1]
+        .replace("resourcequotas", "quotas")
+        .replace("limitranges", "limit_ranges")
+        .replace("persistentvolumes", "pv")
+        .replace("persistentvolumeclaims", "pvc")
+        .replace("storageclasses", "storage_classes"),
+        [],
+    )
+    barrier = threading.Barrier(2)
+
+    def unavailable(*args):
+        barrier.wait(timeout=2)
+        raise ValueError("Optional enrichment unavailable")
+
+    collector.metrics = collector.prices = unavailable
+    snapshot = collector.collect(pool)
+    assert snapshot["core_complete"] and snapshot["nodes"]
+    assert snapshot["metrics"]["samples"] == [] and snapshot["pricing"]["components"] == []
+    assert "Optional enrichment" in snapshot["metrics"]["warnings"][0]
+
+
+def test_metric_query_batches_bound_names_and_encoded_length():
+    import json
+    import re
+    from urllib.parse import quote
+
+    names = [f"pod-{i}-" + "a" * 240 for i in range(250)]
+    batches = list(metric_batches(names))
+    assert [name for batch in batches for name in batch] == names
+    assert all(
+        len(batch) <= 100 and len(quote(json.dumps("|".join(re.escape(n) for n in batch)), safe="")) <= 3000
+        for batch in batches
+    )

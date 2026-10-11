@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { api, params } from "./api";
 import { cores, gib, money, date, Notice } from "./components";
+import PlacementView from "./PlacementView";
 import type { Estimate, Snapshot } from "./types";
 
 export default function Estimator({ snapshot }: { snapshot: Snapshot }) {
@@ -19,6 +20,10 @@ export default function Estimator({ snapshot }: { snapshot: Snapshot }) {
     memory: "1Gi",
     replicas: 6,
     manifest: "",
+    planning_mode: "steady",
+    hpa_max_replicas: 12,
+    max_surge: "25%",
+    spread_zones: false,
   });
   const [result, setResult] = useState<Estimate | null>(null);
   const [history, setHistory] = useState<
@@ -176,6 +181,66 @@ export default function Estimator({ snapshot }: { snapshot: Snapshot }) {
               </p>
             </>
           )}
+          <label>
+            Planning scenario
+            <select
+              aria-label="Planning scenario"
+              value={form.planning_mode}
+              onChange={(e) =>
+                setForm({ ...form, planning_mode: e.target.value })
+              }
+            >
+              <option value="steady">Steady replicas</option>
+              <option value="hpa">HPA maximum</option>
+              <option value="rollout">Rollout headroom</option>
+              <option value="combined">HPA maximum + rollout headroom</option>
+            </select>
+          </label>
+          {["hpa", "combined"].includes(form.planning_mode) && (
+            <label>
+              HPA maximum replicas
+              <input
+                aria-label="HPA maximum replicas"
+                type="number"
+                min="0"
+                max="2000"
+                value={form.hpa_max_replicas}
+                onChange={(e) =>
+                  setForm({ ...form, hpa_max_replicas: Number(e.target.value) })
+                }
+              />
+            </label>
+          )}
+          {["rollout", "combined"].includes(form.planning_mode) && (
+            <label>
+              Surge headroom
+              <input
+                aria-label="Surge headroom"
+                value={form.max_surge}
+                onChange={(e) =>
+                  setForm({ ...form, max_surge: e.target.value })
+                }
+              />
+              <small>
+                Integer or percentage, rounded up; planning override.
+              </small>
+            </label>
+          )}
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={form.spread_zones}
+              onChange={(e) =>
+                setForm({ ...form, spread_zones: e.target.checked })
+              }
+            />
+            Spread proposed Pods across zones
+          </label>
+          <p className="form-hint">
+            Additional demand with existing Pods fixed. Rollout headroom does
+            not simulate replacement, terminating Pods or availability
+            sequencing. HPA cap is a what-if input.
+          </p>
           <button className="button primary full" disabled={busy}>
             {busy ? "Assessing saved capacity…" : "Estimate capacity"}
             <ArrowRight size={16} />
@@ -216,9 +281,17 @@ export default function Estimator({ snapshot }: { snapshot: Snapshot }) {
                 </div>
                 <div>
                   <strong>{result.replicas}</strong>
-                  <span>new replicas</span>
+                  <span>peak proposed replicas</span>
                 </div>
               </div>
+              {result.planning && (
+                <p className="form-hint">
+                  Base {result.planning.steady_replicas} → HPA envelope{" "}
+                  {result.planning.hpa_replicas} + surge{" "}
+                  {result.planning.surge_replicas} = peak{" "}
+                  {result.planning.peak_replicas}
+                </p>
+              )}
               <p className="muted">
                 Per replica: {cores(result.per_replica.cpu)} ·{" "}
                 {gib(result.per_replica.memory)}
@@ -250,16 +323,28 @@ export default function Estimator({ snapshot }: { snapshot: Snapshot }) {
                     <div>
                       <span>3-year resource CUD</span>
                       <strong>
-                        {money(result.cost.cud_3y_monthly)}
-                        <small>/mo</small>
+                        {result.cost.cud_status === "not_applicable"
+                          ? "Not applicable"
+                          : result.cost.cud_3y_monthly == null
+                            ? "Unavailable"
+                            : money(result.cost.cud_3y_monthly)}
+                        <small>
+                          {result.cost.cud_3y_monthly != null ? "/mo" : ""}
+                        </small>
                       </strong>
-                      <p>{money(result.cost.cud_3y_hourly)} / hour</p>
+                      <p>
+                        {result.cost.cud_3y_hourly != null
+                          ? `${money(result.cost.cud_3y_hourly)} / hour`
+                          : result.cost.cud_reason}
+                      </p>
                     </div>
                   </div>
                   <p className="form-hint">
                     3-year commitment obligation:{" "}
-                    {money(result.cost.commitment_3y_obligation)} for eligible
-                    resources. Boot disk priced separately.
+                    {result.cost.commitment_3y_obligation == null
+                      ? "Not quoted"
+                      : money(result.cost.commitment_3y_obligation)}{" "}
+                    for eligible resources. Boot disk priced separately.
                   </p>
                   <p className="form-hint">{result.cost.assumption}</p>
                   <p className="muted">{result.cost.source}</p>
@@ -322,6 +407,7 @@ export default function Estimator({ snapshot }: { snapshot: Snapshot }) {
           )}
         </div>
       </div>
+      {result && <PlacementView result={result} />}
       {history.length > 0 && (
         <section className="panel history">
           <h3>

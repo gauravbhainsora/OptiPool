@@ -31,7 +31,15 @@ The [v0.1.0 publication workflow](https://github.com/gauravbhainsora/OptiPool/ac
 
 Artifact publication does not replace the pending live acceptance below.
 
-## Pending production acceptance
+## v0.2.0 local verification — 12 October 2026
+
+- 71 backend cases passed, including analytics guards, manifest errors, scoped/pinned reads, cache deduplication/eviction/freshness, compact core compatibility and collector concurrency/failure contracts.
+- Three browser flows passed: recommendations/Pod detail/window/export/peak scenario/comparison, CUD status display, and mobile overflow. TypeScript/Vite, Ruff, Prettier and chart lint/render/schema checks passed.
+- Latest 20-user synthetic run: saved-view p95 **0.135s**, ordinary estimate p95 **0.071s**; 16 pools, 40 nodes and 160 Pods, with zero collection during read/estimate workloads. Compact planning cores avoid parsing unused usage histories. These figures do not establish live-cloud or actual-inventory performance.
+- Matching v0.2.0 image/chart passed Docker Desktop / Kind install, Helm and HTTP analytics/scenario smoke checks, restart persistence and temporary 0.2.1-lifecycle.1 upgrade with identical saved IDs. Uninstall retained the PVC; the disposable cluster was removed.
+- New-release publication checks remain pending; exact status is maintained in [the build plan](BUILD_PLAN.md).
+
+## Pending production acceptance (unchanged)
 
 - Collector service-account identity and approved IAM/RBAC are supplied/provisioned by the operator.
 - Read-only collection succeeds for one selected nonproduction pool, including target API networking and real current owner/spec/context data.

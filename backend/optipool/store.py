@@ -75,17 +75,21 @@ class Store:
             CREATE INDEX IF NOT EXISTS snapshots_pool ON snapshots(pool_id, created DESC);
             CREATE TABLE IF NOT EXISTS snapshot_overviews (
                 snapshot_id TEXT PRIMARY KEY REFERENCES snapshots(id) ON DELETE CASCADE, payload BLOB NOT NULL);
+            CREATE TABLE IF NOT EXISTS snapshot_core (
+                snapshot_id TEXT PRIMARY KEY REFERENCES snapshots(id) ON DELETE CASCADE, payload BLOB NOT NULL);
             CREATE TABLE IF NOT EXISTS jobs (
                 id TEXT PRIMARY KEY, scope TEXT NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL,
                 created REAL NOT NULL, updated REAL NOT NULL, error TEXT, actor TEXT NOT NULL);
             CREATE UNIQUE INDEX IF NOT EXISTS active_job ON jobs(scope,kind)
                 WHERE state IN ('queued','running');
+            CREATE INDEX IF NOT EXISTS jobs_history ON jobs(scope,kind,created DESC);
             CREATE TABLE IF NOT EXISTS estimates (
                 id TEXT PRIMARY KEY, snapshot_id TEXT NOT NULL REFERENCES snapshots(id),
                 created REAL NOT NULL, actor TEXT NOT NULL, input BLOB NOT NULL, result BLOB NOT NULL);
             CREATE TABLE IF NOT EXISTS audit (
                 id INTEGER PRIMARY KEY, created REAL NOT NULL, actor TEXT NOT NULL,
                 action TEXT NOT NULL, scope TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS estimates_snapshot ON estimates(snapshot_id,created DESC);
         """)
         self.db.execute(
             "UPDATE jobs SET state='failed',error='Collection interrupted by restart',updated=? "
@@ -133,31 +137,35 @@ class Store:
             )
             self.db.execute("INSERT OR REPLACE INTO metadata VALUES ('inventory_at',?)", (str(time.time()),))
 
-    def inventory(self):
+    def inventory(self, pool_id=None):
+        # One indexed query; never load full metric histories for inventory or pool lookup.
         with self.lock:
-            rows = self.db.execute("SELECT * FROM inventory ORDER BY id").fetchall()
-            result = []
-            for row in rows:
-                item = unpack(row["payload"])
-                item["available"] = bool(row["available"])
-                snap = self.db.execute(
-                    "SELECT id,created FROM snapshots WHERE pool_id=? ORDER BY created DESC LIMIT 1",
-                    (row["id"],),
-                ).fetchone()
-                item["snapshot_id"] = snap["id"] if snap else None
-                item["snapshot_at"] = snap["created"] if snap else None
-                if snap:
-                    header = self.db.execute(
-                        "SELECT payload FROM snapshot_overviews WHERE snapshot_id=?", (snap["id"],)
-                    ).fetchone()
-                    if header:
-                        saved = unpack(header["payload"])
-                        item["snapshot_pool"], item["snapshot_summary"] = saved["pool"], saved["summary"]
-                result.append(item)
-            return result
+            rows = self.db.execute(
+                "SELECT i.*,s.id AS snapshot_id,s.created AS snapshot_at,o.payload AS overview "
+                "FROM inventory i LEFT JOIN snapshots s ON s.id=(SELECT id FROM snapshots "
+                "WHERE pool_id=i.id ORDER BY created DESC LIMIT 1) "
+                "LEFT JOIN snapshot_overviews o ON o.snapshot_id=s.id "
+                + ("WHERE i.id=? " if pool_id is not None else "")
+                + "ORDER BY i.id",
+                (pool_id,) if pool_id is not None else (),
+            ).fetchall()
+        result = []
+        # Decode outside the SQLite connection lock so readers do not block publications.
+        for row in rows:
+            item = unpack(row["payload"])
+            item.update(
+                available=bool(row["available"]),
+                snapshot_id=row["snapshot_id"],
+                snapshot_at=row["snapshot_at"],
+            )
+            if row["overview"]:
+                saved = unpack(row["overview"])
+                item["snapshot_pool"], item["snapshot_summary"] = saved["pool"], saved["summary"]
+            result.append(item)
+        return result
 
     def pool(self, pool_id):
-        pool = next((p for p in self.inventory() if p["id"] == pool_id), None)
+        pool = next(iter(self.inventory(pool_id)), None)
         return (
             {k: v for k, v in pool.items() if k not in {"snapshot_pool", "snapshot_summary"}}
             if pool
@@ -169,22 +177,54 @@ class Store:
             raise ValueError("Incomplete or mismatched core snapshot cannot be published")
         ident = str(uuid.uuid4())
         packed, header = pack(payload), pack(overview(payload))
+        core = pack({k: v for k, v in payload.items() if k != "metrics"})
         with self.lock, self.db:
             self.db.execute("INSERT INTO snapshots VALUES (?,?,?,?)", (ident, pool_id, time.time(), packed))
             self.db.execute("INSERT INTO snapshot_overviews VALUES (?,?)", (ident, header))
+            self.db.execute("INSERT INTO snapshot_core VALUES (?,?)", (ident, core))
         return ident
 
-    def snapshot(self, pool_id=None, snapshot_id=None):
+    def snapshot(self, pool_id=None, snapshot_id=None, include_metrics=True):
         with self.lock:
+            query = (
+                "SELECT s.id,s.created,"
+                + ("s.payload" if include_metrics else "COALESCE(c.payload,s.payload)")
+                + " AS payload FROM snapshots s "
+            )
+            if not include_metrics:
+                query += "LEFT JOIN snapshot_core c ON c.snapshot_id=s.id "
             if snapshot_id:
-                row = self.db.execute("SELECT * FROM snapshots WHERE id=?", (snapshot_id,)).fetchone()
+                row = self.db.execute(query + "WHERE s.id=?", (snapshot_id,)).fetchone()
             else:
                 row = self.db.execute(
-                    "SELECT * FROM snapshots WHERE pool_id=? ORDER BY created DESC LIMIT 1", (pool_id,)
+                    query + "WHERE s.pool_id=? ORDER BY s.created DESC LIMIT 1", (pool_id,)
                 ).fetchone()
         if not row:
             return None
-        return {**unpack(row["payload"]), "id": row["id"], "saved_at": row["created"]}
+        result = {**unpack(row["payload"]), "id": row["id"], "saved_at": row["created"]}
+        if not include_metrics:
+            result.pop("metrics", None)  # Older snapshots fall back to the original immutable blob.
+        return result
+
+    def snapshots(self, pool_id, limit=100):
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT id,created FROM snapshots WHERE pool_id=? ORDER BY created DESC LIMIT ?",
+                (pool_id, limit),
+            ).fetchall()
+        return [{"id": r["id"], "saved_at": r["created"]} for r in rows]
+
+    def latest_snapshot_id(self, pool_id):
+        with self.lock:
+            row = self.db.execute(
+                "SELECT id FROM snapshots WHERE pool_id=? ORDER BY created DESC LIMIT 1", (pool_id,)
+            ).fetchone()
+        return row["id"] if row else None
+
+    def snapshot_pool_id(self, snapshot_id):
+        with self.lock:
+            row = self.db.execute("SELECT pool_id FROM snapshots WHERE id=?", (snapshot_id,)).fetchone()
+        return row["pool_id"] if row else None
 
     def enqueue(self, scope, kind, actor):
         with self.lock, self.db:
@@ -222,10 +262,11 @@ class Store:
 
     def save_estimate(self, snapshot_id, inputs, result, actor):
         ident = str(uuid.uuid4())
+        packed_input, packed_result = pack(inputs), pack(result)
         with self.lock, self.db:
             self.db.execute(
                 "INSERT INTO estimates VALUES (?,?,?,?,?,?)",
-                (ident, snapshot_id, time.time(), actor, pack(inputs), pack(result)),
+                (ident, snapshot_id, time.time(), actor, packed_input, packed_result),
             )
             self.db.execute(
                 "INSERT INTO audit(created,actor,action,scope) VALUES (?,?,?,?)",
@@ -240,16 +281,16 @@ class Store:
                 "WHERE s.pool_id=? ORDER BY e.created DESC LIMIT 20",
                 (pool_id,),
             ).fetchall()
-            return [
-                {
-                    "id": r["id"],
-                    "snapshot_id": r["snapshot_id"],
-                    "created": r["created"],
-                    "input": unpack(r["input"]),
-                    "result": unpack(r["result"]),
-                }
-                for r in rows
-            ]
+        return [
+            {
+                "id": r["id"],
+                "snapshot_id": r["snapshot_id"],
+                "created": r["created"],
+                "input": unpack(r["input"]),
+                "result": unpack(r["result"]),
+            }
+            for r in rows
+        ]
 
     def prune(self):
         cutoff = time.time() - 30 * 86400

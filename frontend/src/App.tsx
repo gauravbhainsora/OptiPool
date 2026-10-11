@@ -26,6 +26,8 @@ import {
 } from "./components";
 import Estimator from "./Estimator";
 import PodTable from "./PodTable";
+import RightSizing from "./RightSizing";
+import SnapshotCompare from "./SnapshotCompare";
 import type { Job, Pool, Snapshot, Workload } from "./types";
 
 type Inventory = {
@@ -63,6 +65,11 @@ export default function App() {
   const [poolId, setPoolId] = useState("");
   const [tab, setTab] = useState<Tab>("pools");
   const [days, setDays] = useState(3);
+  const [loadedDays, setLoadedDays] = useState(3);
+  useEffect(() => {
+    const timer = setTimeout(() => setLoadedDays(days), 150);
+    return () => clearTimeout(timer);
+  }, [days]);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -111,7 +118,7 @@ export default function App() {
     setSnapshot((previous) => (previous?.pool.id === poolId ? previous : null));
     setError("");
     api<Snapshot>(
-      `/snapshot?${params({ pool_id: poolId, days })}`,
+      `/snapshot?${params({ pool_id: poolId, days: loadedDays })}`,
       undefined,
       controller.signal,
     )
@@ -123,7 +130,7 @@ export default function App() {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [poolId, days, generation]);
+  }, [poolId, loadedDays, generation]);
   useEffect(() => {
     if (!job || !["queued", "running"].includes(job.state)) return;
     const timer = setTimeout(async () => {
@@ -711,9 +718,12 @@ export default function App() {
           ) : (
             <Estimator key={snapshot.id} snapshot={snapshot} />
           )}
+          {tab === "pools" && snapshot && (
+            <SnapshotCompare key={snapshot.id} snapshot={snapshot} />
+          )}
           <footer className="page-footer">
             <span>
-              OptiPool <b>v0.1.0</b> · read-only infrastructure planning
+              OptiPool <b>v0.2.0</b> · read-only infrastructure planning
             </span>
             <span>
               <Database size={13} />
@@ -772,7 +782,7 @@ function Workloads({
         </div>
         <ExportButtons
           table="workloads"
-          query={{ pool_id: snapshot.pool.id, days }}
+          query={{ pool_id: snapshot.pool.id, snapshot_id: snapshot.id, days }}
         />
       </div>
       <div className="window-controls">
@@ -906,6 +916,7 @@ function Workloads({
           <pre>{JSON.stringify(expanded.spec, null, 2)}</pre>
         </section>
       )}
+      <RightSizing snapshot={snapshot} />
       <PodTable snapshot={snapshot} />
       <div className="help-note">
         <Activity size={16} />

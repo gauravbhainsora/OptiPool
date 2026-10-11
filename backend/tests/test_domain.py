@@ -221,3 +221,28 @@ def test_cost_component_commitment_and_730_hours(saved):
     assert r["commitment_3y_obligation"] == pytest.approx((0.058 + 0.034) * 2 * 24 * 365 * 3)
     assert not cost({}, 1)["available"]
     assert not cost({"components": [{"on_demand_hourly": None}]}, 1)["available"]
+
+
+@pytest.mark.parametrize("resource_fields", [None, {"requests": None, "limits": {"cpu": "500m"}}])
+def test_nullable_manifest_resources_are_normalized(resource_fields):
+    spec = {"containers": [{"name": "test", "resources": resource_fields}], "initContainers": None}
+    pod, _, _ = Scenario(manifest=deployment(spec)).pod()
+    assert pod_resources(pod)["cpu"] == (0.5 if resource_fields else 0)
+
+
+def test_no_eligible_cud_is_not_an_on_demand_quote(saved):
+    for component in saved["pricing"]["components"]:
+        component["cud_eligible"] = False
+    result = cost(saved["pricing"], 2)
+    assert result["available"] and result["on_demand_hourly"] > 0
+    assert result["cud_status"] == "not_applicable"
+    assert result["cud_3y_hourly"] is None
+    assert result["cud_3y_monthly"] is None
+    assert result["commitment_3y_obligation"] is None
+
+
+def test_missing_cud_price_keeps_on_demand_available(saved):
+    saved["pricing"]["components"][0]["cud_3y_hourly"] = None
+    result = cost(saved["pricing"], 1)
+    assert result["available"] and result["cud_status"] == "unavailable"
+    assert result["cud_3y_hourly"] is None and result["commitment_3y_obligation"] is None

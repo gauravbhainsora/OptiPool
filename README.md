@@ -8,6 +8,8 @@ The local demo works without Google Cloud credentials. This first release includ
 
 See the [architecture diagram](docs/architecture.md) for collection, persistence and estimation boundaries.
 
+The self-contained [architecture and build plan](docs/BUILD_PLAN.md) records requirements, implementation status, verification, release details and remaining work for sharing with another AI or engineer. Version 0.2.0 adds analytics and loading optimizations; version 0.1.0 retains its original artifacts. See the plan for publication and acceptance status.
+
 ## Run locally
 
 Prerequisites: Python 3.13+, Node.js 22+, npm. Helm 3.17.3, Docker, kubectl and Kind 0.27.0 are needed for deployment tests.
@@ -26,12 +28,12 @@ For development with frontend hot reloading, keep the API running and use `npm -
 
 | View | What it shows |
 |---|---|
-| Node pools | Project/cluster/pool selection, environment, machine configuration, autoscaler bounds, saved requests, policy violations and snapshot time |
+| Node pools | Project/cluster/pool selection, environment, machine configuration, autoscaler bounds, saved requests, policy violations, snapshot time and saved-snapshot comparisons |
 | Nodes | Readiness, cordons, allocatable CPU/memory, requests, configured limits, remaining request budgets, Pod slots, labels and taints |
-| Workloads | Controller ownership, associated Services, cluster and pool replica counts, requests and highest-replica p99; a separate searchable per-Pod table shows nodes, status, requests, limits and restarts |
-| Capacity planner | Simple requests/replicas or Deployment YAML; feasible placements, new nodes, growth limits and saved cost scenarios |
+| Workloads | Controller ownership, Services, replica counts, highest-replica p99 and advisory request proposals with headroom/coverage; per-Pod latest saved usage/p99, container requests/limits, conditions and available OOM evidence |
+| Capacity planner | Requests/replicas or Deployment YAML; steady/HPA/rollout envelopes, zone spread, before/after node budgets, placement explanations, growth limits and saved cost scenarios |
 
-Node-pool, workload and Pod tables export **CSV and Excel**, with snapshot provenance. Workload exports follow the selected usage window. No export initiates a cloud fetch.
+Node-pool, workload and Pod tables export **CSV and Excel**, with snapshot provenance. Workload and Pod usage exports follow the selected window and displayed snapshot. No export initiates a cloud fetch.
 
 Choose **Selected node pool** before estimating. The result names the target pool, cluster and project. The planner places proposed Pods only on that pool or new nodes using its saved configuration; it does not choose another pool automatically.
 
@@ -52,23 +54,23 @@ bash scripts/kind-test.sh
 
 The second command builds the image and installs the packaged chart in its own disposable Kind cluster. It checks HTTP flows, Helm tests, restart persistence, chart upgrades and retained storage, then removes only its own cluster. It requires a running Docker engine. These tests use no GCP credentials.
 
-Deployment uses [charts/optipool](charts/optipool), version **0.1.0**, app version **0.1.0**. SQLite has one database-owning process and one replica on a durable block volume. The chart enforces this and uses Recreate updates. Defaults are a private demo; public ingress requires signed IAP authentication.
+Deployment uses [charts/optipool](charts/optipool), version **0.2.0**, app version **0.2.0**. SQLite has one database-owning process and one replica on a durable block volume. The chart enforces this and uses Recreate updates. Defaults are a private demo; public ingress requires signed IAP authentication.
 
 Pull the published chart without cloning the source:
 
 ```bash
 helm repo add optipool https://raw.githubusercontent.com/gauravbhainsora/OptiPool/main/docs/helm
 helm repo update
-helm pull optipool/optipool --version 0.1.0
+helm pull optipool/optipool --version 0.2.0
 ```
 
-The public container image is `ghcr.io/gauravbhainsora/optipool:0.1.0`, available for Linux AMD64 and ARM64. The [0.1.0 release](https://github.com/gauravbhainsora/OptiPool/releases/tag/v0.1.0) includes the chart, checksum and exact image digest. Anonymous chart and image access were verified; see the [deployment guide](docs/deployment.md) for installation and production prerequisites.
+The public container image is `ghcr.io/gauravbhainsora/optipool:0.2.0`, available for Linux AMD64 and ARM64. The [0.2.0 release](https://github.com/gauravbhainsora/OptiPool/releases/tag/v0.2.0) includes the chart, checksum and exact image digest. See the [deployment guide](docs/deployment.md) for installation and production prerequisites.
 
 Read the [local testing guide](docs/testing.md), [configuration and live collector guide](docs/configuration.md), [GKE deployment guide](docs/deployment.md), [backup/restore guide](docs/operations.md), [scheduling support matrix](docs/estimation.md), and [verification evidence](docs/verification.md).
 
 ## Scope and limitations
 
-GKE Standard is supported. This is a conservative simulator, not the Kubernetes scheduler. Node selectors, required node affinity, taints/tolerations, basic hard Pod affinity/anti-affinity, Pod slots, effective requests, existing outstanding demand and simple namespace quotas are modeled. Storage binding, topology spread, custom scheduling, admission effects and other unsupported features produce **Cannot fully assess**. Search is bounded; a found placement does not prove a minimum node count.
+GKE Standard is supported. This is a conservative simulator, not the Kubernetes scheduler. Node selectors, required node affinity, taints/tolerations, basic hard Pod affinity/anti-affinity, hard topology spread, Pod slots, effective requests, existing outstanding demand and simple namespace quotas are modeled. Storage binding, dynamic label keys, custom scheduling, admission effects and other unsupported features produce **Cannot fully assess**. Search is bounded; a found placement does not prove a minimum node count. HPA and surge inputs model additional peak demand; full rollout sequencing and failures are outside scope. Request proposals require review; per-container usage and CPU throttling history remain unavailable.
 
 Live p99 covers surviving Pods within their current lifetime; deleted-replica history is not reconstructed. Current source/cadence and partial coverage are labelled. Live pricing requires an exact reviewed public SKU mapping, rather than guessed discounts. Missing prices do not prevent capacity assessment. CUD cost is a hypothetical new fully covered three-year resource commitment, not existing account savings.
 

@@ -1,7 +1,7 @@
 # Placeholders only. Copy to an ignored file and supply approved real values.
 image:
   repository: REGION-docker.pkg.dev/HOST_PROJECT/REPOSITORY/optipool
-  tag: "0.1.0"
+  tag: "0.2.0"
 config:
   mode: live
   auth_mode: iap

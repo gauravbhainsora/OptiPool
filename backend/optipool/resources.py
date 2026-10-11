@@ -31,11 +31,11 @@ def quantity(value) -> float:
 
 
 def resources(container, field="requests"):
-    data = container.get("resources", {})
-    values = data.get(field, {})
+    data = container.get("resources") or {}
+    values = data.get(field) or {}
     # Kubernetes defaults a limit into a missing request; admission may add other defaults.
     if field == "requests":
-        values = {**data.get("limits", {}), **values}
+        values = {**(data.get("limits") or {}), **values}
     return {"cpu": quantity(values.get("cpu", 0)), "memory": quantity(values.get("memory", 0))}
 
 
@@ -46,7 +46,7 @@ def pod_resources(spec, field="requests"):
             total[k] += value
     sidecars = {"cpu": 0.0, "memory": 0.0}
     init_peak = {"cpu": 0.0, "memory": 0.0}
-    for c in spec.get("initContainers", []):
+    for c in spec.get("initContainers") or []:
         request = resources(c, field)
         if c.get("restartPolicy") == "Always":
             for k in sidecars:
@@ -57,9 +57,9 @@ def pod_resources(spec, field="requests"):
                 init_peak[k] = max(init_peak[k], sidecars[k] + request[k])
     for k in total:
         total[k] = max(total[k] + sidecars[k], init_peak[k])
-        if spec.get("resources", {}).get(field, {}).get(k) is not None:
+        if ((spec.get("resources") or {}).get(field) or {}).get(k) is not None:
             total[k] = quantity(spec["resources"][field][k])
-        total[k] += quantity(spec.get("overhead", {}).get(k, 0))
+        total[k] += quantity((spec.get("overhead") or {}).get(k, 0))
     return total
 
 
@@ -103,7 +103,7 @@ def node_eligible(node, spec):
     if required:
         terms = required.get("nodeSelectorTerms", [])
         if not any(
-            term
+            (term.get("matchExpressions") or term.get("matchFields"))
             and selector_matches(node["labels"], term)
             and selector_matches(
                 {"metadata.name": node["name"]}, {"matchExpressions": term.get("matchFields", [])}

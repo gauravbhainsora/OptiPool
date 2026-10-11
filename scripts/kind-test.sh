@@ -6,6 +6,9 @@ task_cluster="optipool-verify-$$"
 task_dir="$(mktemp -d)"
 previous_context="$(kubectl config current-context 2>/dev/null || true)"
 port_forward_pid=""
+chart_version="$(helm show chart charts/optipool | awk '/^version:/ {print $2}')"
+app_version="$(helm show chart charts/optipool | awk '/^appVersion:/ {gsub(/"/, "", $2); print $2}')"
+upgrade_version="$(printf '%s\n' "$chart_version" | awk -F. '{printf "%d.%d.%d-lifecycle.1", $1, $2, $3+1}')"
 cleanup() {
   if [ -n "$port_forward_pid" ]; then kill "$port_forward_pid" 2>/dev/null || true; fi
   kind delete cluster --name "$task_cluster"
@@ -13,11 +16,11 @@ cleanup() {
   rm -rf "$task_dir"
 }
 trap cleanup EXIT
-docker build -t optipool:0.1.0 .
+docker build -t "optipool:$app_version" .
 kind create cluster --name "$task_cluster" --image kindest/node:v1.32.2 --wait 120s
-kind load docker-image optipool:0.1.0 --name "$task_cluster"
+kind load docker-image "optipool:$app_version" --name "$task_cluster"
 helm package charts/optipool --destination "$task_dir"
-helm install demo "$task_dir/optipool-0.1.0.tgz" --kube-context "kind-$task_cluster" \
+helm install demo "$task_dir/optipool-$chart_version.tgz" --kube-context "kind-$task_cluster" \
   --namespace optipool --create-namespace --set image.repository=optipool --set image.pullPolicy=Never --wait --timeout 180s
 helm test demo --kube-context "kind-$task_cluster" --namespace optipool --logs --timeout 120s
 kubectl --context "kind-$task_cluster" -n optipool port-forward service/demo-optipool 18080:80 >"$task_dir/forward.log" 2>&1 &
@@ -34,10 +37,10 @@ port_forward_pid=""
 kubectl --context "kind-$task_cluster" -n optipool rollout restart deployment/demo-optipool
 kubectl --context "kind-$task_cluster" -n optipool rollout status deployment/demo-optipool --timeout=180s
 cp -R charts/optipool "$task_dir/chart"
-sed 's/^version: 0.1.0$/version: 0.1.1/' "$task_dir/chart/Chart.yaml" > "$task_dir/Chart.yaml"
+sed "s/^version: $chart_version$/version: $upgrade_version/" "$task_dir/chart/Chart.yaml" > "$task_dir/Chart.yaml"
 mv "$task_dir/Chart.yaml" "$task_dir/chart/Chart.yaml"
 helm package "$task_dir/chart" --destination "$task_dir"
-helm upgrade demo "$task_dir/optipool-0.1.1.tgz" --kube-context "kind-$task_cluster" \
+helm upgrade demo "$task_dir/optipool-$upgrade_version.tgz" --kube-context "kind-$task_cluster" \
   --namespace optipool --set image.repository=optipool --set image.pullPolicy=Never --wait --timeout 180s
 helm test demo --kube-context "kind-$task_cluster" --namespace optipool --logs --timeout 120s
 kubectl --context "kind-$task_cluster" -n optipool port-forward service/demo-optipool 18080:80 >"$task_dir/forward.log" 2>&1 &

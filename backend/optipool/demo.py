@@ -112,6 +112,17 @@ class DemoCollector:
                         "labels": {"app": name},
                         "spec": spec,
                         "phase": "Running",
+                        "ready": True,
+                        "restarts": 0,
+                        "conditions": [{"type": "Ready", "status": "True"}],
+                        "container_statuses": [
+                            {
+                                "name": spec["containers"][0]["name"],
+                                "ready": True,
+                                "restartCount": 0,
+                                "state": {"running": {}},
+                            }
+                        ],
                         "uid": pod_name,
                         "created": now - 12 * 86400,
                     }
@@ -156,6 +167,7 @@ class DemoCollector:
                 "namespace_context_complete": True,
             },
             "metrics": {
+                "cadence_seconds": 1800,
                 "cutoff": now,
                 "samples": samples,
                 "source": "Synthetic fixtures",

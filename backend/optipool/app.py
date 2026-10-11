@@ -10,13 +10,14 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .auth import Auth
+from .comparison import compare
 from .config import load_settings
 from .demo import DemoCollector
 from .estimator import Scenario, estimate
 from .exports import pod_rows, pool_rows, render, workload_rows
-from .metrics import summarize
-from .pods import selected_pods
+from .recommendations import recommend
 from .store import Store
+from .views import SavedViews
 
 logger = logging.getLogger("optipool")
 
@@ -36,6 +37,7 @@ def create_app(settings=None, collector=None):
     # Live ADC is loaded inside the first collection job, so cached viewing survives credential outages.
     state = {"collector": collector or (DemoCollector(settings) if settings.mode == "demo" else None)}
     auth = Auth(settings)
+    views = SavedViews(store, settings.min_metric_samples)
 
     def source():
         if state["collector"] is None:
@@ -97,7 +99,7 @@ def create_app(settings=None, collector=None):
 
     app = FastAPI(
         title="OptiPool",
-        version="0.1.0",
+        version="0.2.0",
         lifespan=lifespan,
         docs_url="/api/docs" if settings.auth_mode == "local" else None,
         redoc_url=None,
@@ -163,23 +165,42 @@ def create_app(settings=None, collector=None):
         }
 
     def snapshot(pool_id):
-        value = store.snapshot(pool_id=pool_id)
+        value = store.snapshot(pool_id=pool_id, include_metrics=False)
         if value is None:
             raise HTTPException(404, "Pool has no saved snapshot. Use Fetch latest live data.")
         return value
 
+    def saved_view(pool_id, days, snapshot_id=None):
+        content = views.get(pool_id, days, snapshot_id)
+        if content is None:
+            raise HTTPException(404, "Pool has no saved snapshot. Use Fetch latest live data.")
+        return content
+
     @app.get("/api/snapshot")
     def get_snapshot(pool_id: str, days: int = Query(3, ge=1, le=10), actor=Depends(auth)):
-        value = snapshot(pool_id)
-        # Usage samples remain server-side; return the selected aggregated window.
-        usage = summarize(value, days, settings.min_metric_samples)
-        return {
-            **{k: v for k, v in value.items() if k not in {"metrics", "context"}},
-            "usage": usage,
-            "pods": selected_pods(value),
-            "context_warnings": value.get("context", {}).get("uncertainties", []),
-            "pending_demand": len(value.get("context", {}).get("pending", [])),
-        }
+        return Response(saved_view(pool_id, days), media_type="application/json")
+
+    @app.get("/api/recommendations")
+    def recommendations(
+        pool_id: str,
+        days: int = Query(3, ge=1, le=10),
+        headroom: int = Query(20, ge=0, le=100),
+        snapshot_id: str | None = None,
+        actor=Depends(auth),
+    ):
+        value = json.loads(saved_view(pool_id, days, snapshot_id))
+        return recommend(value, value["usage"], headroom)
+
+    @app.get("/api/snapshots")
+    def snapshots(pool_id: str, actor=Depends(auth)):
+        return store.snapshots(pool_id)
+
+    @app.get("/api/snapshots/compare")
+    def comparison(pool_id: str, before: str, after: str, actor=Depends(auth)):
+        values = [store.snapshot(snapshot_id=sid, include_metrics=False) for sid in [before, after]]
+        if any(v is None or v["pool"]["id"] != pool_id for v in values):
+            raise HTTPException(404, "Both snapshots must be saved for the selected pool")
+        return compare(*values)
 
     @app.post("/api/refresh/inventory", status_code=202)
     def refresh_inventory(actor=Depends(auth)):
@@ -211,7 +232,7 @@ def create_app(settings=None, collector=None):
             value = snapshot(pool_id)
             if scenario.pod()[2] > settings.max_replicas:
                 raise ValueError("Replica count exceeds the configured simulation bound")
-            result = estimate(value, scenario, settings.max_added_nodes)
+            result = estimate(value, scenario, settings.max_added_nodes, settings.max_replicas)
         except (ValueError, KeyError, TypeError) as exc:
             raise HTTPException(422, str(exc)) from None
         ident = store.save_estimate(value["id"], scenario.model_dump(), result, actor)
@@ -229,6 +250,7 @@ def create_app(settings=None, collector=None):
         project: str | None = None,
         cluster: str | None = None,
         days: int = Query(3, ge=1, le=10),
+        snapshot_id: str | None = None,
         actor=Depends(auth),
         pod_search: str = Query("", max_length=200),
     ):
@@ -240,15 +262,15 @@ def create_app(settings=None, collector=None):
                 for p in store.inventory()
                 if (not project or p["project"] == project) and (not cluster or p["cluster"] == cluster)
             ]
-            rows = pool_rows(pools, {p["id"]: store.snapshot(pool_id=p["id"]) for p in pools})
+            rows = pool_rows(pools)
         else:
             if not pool_id:
                 raise HTTPException(422, "pool_id required")
-            value = snapshot(pool_id)
+            value = json.loads(saved_view(pool_id, days, snapshot_id))
             rows = (
-                pod_rows(value, pod_search)
+                pod_rows(value, pod_search, value["usage"])
                 if table == "pods"
-                else workload_rows(value, summarize(value, days, settings.min_metric_samples))
+                else workload_rows(value, value["usage"])
             )
         content, mime = render(rows, format, table)
         return Response(

@@ -19,6 +19,11 @@ test("saved inventory, workload window, Pods, Excel export and named pool assess
   ).toBeVisible();
   await page.getByRole("slider", { name: "Usage lookback days" }).fill("10");
   await expect(page.getByText("10-day window", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Request recommendations" }),
+  ).toBeVisible();
+  await page.getByLabel("Recommendation headroom").selectOption("30");
+  await expect(page.getByText("Review required").first()).toBeVisible();
   const workloadExport = page
     .getByRole("link", { name: "Excel", exact: true })
     .first();
@@ -27,7 +32,17 @@ test("saved inventory, workload window, Pods, Excel export and named pool assess
   await workloadExport.click();
   expect((await download).suggestedFilename()).toBe("optipool-workloads.xlsx");
   await page.getByRole("textbox", { name: "Search Pods" }).fill("checkout");
-  await expect(page.locator(".pod-panel tbody tr")).toHaveCount(3);
+  await expect(
+    page.locator(".pod-panel > .table-wrap > table > tbody > tr"),
+  ).toHaveCount(3);
+  await page
+    .locator(".pod-panel")
+    .getByText("Pod details", { exact: true })
+    .first()
+    .click();
+  await expect(
+    page.getByText("CPU throttling history is not collected.").first(),
+  ).toBeVisible();
   await page
     .getByRole("tab", { name: "Capacity planner", exact: true })
     .click();
@@ -36,12 +51,17 @@ test("saved inventory, workload window, Pods, Excel export and named pool assess
   ).toBeVisible();
   await page.getByRole("textbox", { name: "CPU request / replica" }).fill("2");
   await page.getByRole("spinbutton", { name: "Replica count" }).fill("10");
+  await page.getByLabel("Planning scenario").selectOption("combined");
+  await page.getByLabel("HPA maximum replicas").fill("12");
+  await page.getByLabel("Surge headroom").fill("25%");
   await page
     .getByRole("button", { name: "Estimate capacity", exact: true })
     .click();
   await expect(
     page.getByRole("heading", { name: "Needs nodes", exact: true }),
   ).toBeVisible();
+  await expect(page.getByText(/surge 3 = peak 15/)).toBeVisible();
+  await expect(page.locator(".node-plan").first()).toBeVisible();
   await expect(
     page.getByText("Target node pool", { exact: true }),
   ).toBeVisible();
@@ -61,6 +81,18 @@ test("saved inventory, workload window, Pods, Excel export and named pool assess
     page.getByRole("heading", { name: "Blocked constraints", exact: true }),
   ).toBeVisible();
   await page.getByRole("tab", { name: "Node pools 8", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Fetch latest live data", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Compare snapshots", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Compare snapshots", exact: true })
+    .click();
+  await expect(
+    page.getByText("No changes in compared resource fields."),
+  ).toBeVisible();
   await page.goto("/");
   await expect(
     page.getByRole("tab", { name: "Node pools 8", exact: true }),
@@ -70,6 +102,45 @@ test("saved inventory, workload window, Pods, Excel export and named pool assess
     fullPage: true,
   });
   expect(errors).toEqual([]);
+});
+
+test("CUD quote distinguishes inapplicable and unavailable prices", async ({
+  page,
+}) => {
+  let status = "not_applicable";
+  await page.route("**/api/estimate?*", async (route) => {
+    const response = await route.fetch();
+    const result = await response.json();
+    await route.fulfill({
+      response,
+      json: {
+        ...result,
+        cost: {
+          ...result.cost,
+          cud_status: status,
+          cud_3y_hourly: null,
+          cud_3y_monthly: null,
+          commitment_3y_obligation: null,
+        },
+      },
+    });
+  });
+  await page.goto("/");
+  await expect(
+    page.getByRole("tab", { name: "Node pools 8", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("tab", { name: "Capacity planner", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Estimate capacity", exact: true })
+    .click();
+  await expect(page.getByText("Not applicable", { exact: true })).toBeVisible();
+  status = "unavailable";
+  await page
+    .getByRole("button", { name: "Estimate capacity", exact: true })
+    .click();
+  await expect(page.getByText("Unavailable", { exact: true })).toBeVisible();
 });
 
 test("mobile layout keeps navigation and table overflow inside the page", async ({

@@ -5,7 +5,8 @@ def cost(pricing, nodes):
     if any(c.get("on_demand_hourly") is None for c in components):
         return {"available": False, "reason": "A required component price is missing"}
     demand = sum(c["on_demand_hourly"] for c in components) * nodes
-    cud_available = all(not c.get("cud_eligible") or c.get("cud_3y_hourly") is not None for c in components)
+    eligible = [c for c in components if c.get("cud_eligible")]
+    cud_available = bool(eligible) and all(c.get("cud_3y_hourly") is not None for c in eligible)
     cud = (
         sum(c["cud_3y_hourly"] if c.get("cud_eligible") else c["on_demand_hourly"] for c in components)
         * nodes
@@ -19,6 +20,12 @@ def cost(pricing, nodes):
         "on_demand_hourly": demand,
         "on_demand_monthly": demand * 730,
         "cud_3y_hourly": cud,
+        "cud_status": "available" if cud_available else "unavailable" if eligible else "not_applicable",
+        "cud_reason": None
+        if cud_available
+        else "Eligible commitment prices are missing"
+        if eligible
+        else "No eligible resources in this node configuration",
         "cud_3y_monthly": cud * 730 if cud is not None else None,
         "commitment_3y_obligation": obligation * 24 * 365 * 3 if cud_available else None,
         "source": pricing["source"],

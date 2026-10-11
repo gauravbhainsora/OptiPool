@@ -1,6 +1,6 @@
 # GKE deployment and Helm releases
 
-The chart/app start at 0.1.0. Chart `version` is package SemVer; quoted `appVersion` identifies application compatibility. Pin your registry image tag or immutable digest. Do not deploy `latest`. Helm 3.17.3 / Kind 0.27.0 / Kubernetes 1.32.2 are the local verification baseline; GKE production compatibility must be checked on the target cluster.
+The current chart/app version is 0.2.0. Chart `version` is package SemVer; quoted `appVersion` identifies application compatibility. Pin your registry image tag or immutable digest. Do not deploy `latest`. Helm 3.17.3 / Kind 0.27.0 / Kubernetes 1.32.2 are the local verification baseline; GKE production compatibility must be checked on the target cluster.
 
 ## Private demo deployment
 
@@ -9,19 +9,19 @@ Pull the public chart:
 ```bash
 helm repo add optipool https://raw.githubusercontent.com/gauravbhainsora/OptiPool/main/docs/helm
 helm repo update
-helm pull optipool/optipool --version 0.1.0
+helm pull optipool/optipool --version 0.2.0
 ```
 
-The repository index includes a SHA256 digest and points to the archive at the immutable `v0.1.0` Git tag. The release also carries a checksum file and an `image-digest.txt` containing the exact multi-platform image reference. The default image repository is `ghcr.io/gauravbhainsora/optipool`.
+The repository index includes a SHA256 digest and points to the archive at the immutable `v0.2.0` Git tag. The release also carries a checksum file and an `image-digest.txt` containing the exact multi-platform image reference. The default image repository is `ghcr.io/gauravbhainsora/optipool`.
 
-Release 0.1.0 is public: anonymous Helm package download and GHCR access for both Linux AMD64 and ARM64 were verified on 12 October 2026. The following visibility step applies when publishing a new package or using a private registry.
+The existing OptiPool image package is public. Check the build plan for the latest release verification. The following visibility step applies when publishing a new package or using a private registry.
 
-GitHub initializes new container packages as private. The repository owner should open [the image package](https://github.com/users/gauravbhainsora/packages/container/package/optipool), then **Package settings → Change visibility → Public** for anonymous image pulls. Verify with `docker pull ghcr.io/gauravbhainsora/optipool:0.1.0` without registry credentials. Chart downloads are public independently of this setting. If keeping the image private, pre-create an approved registry pull secret in the namespace and set `imagePullSecrets: [{name: your-pull-secret}]`; do not put credentials in values or Git. Alternatively override `image.repository` with your own published image.
+GitHub initializes new container packages as private. The repository owner should open [the image package](https://github.com/users/gauravbhainsora/packages/container/package/optipool), then **Package settings → Change visibility → Public** for anonymous image pulls. Verify with `docker pull ghcr.io/gauravbhainsora/optipool:0.2.0` without registry credentials. Chart downloads are public independently of this setting. If keeping the image private, pre-create an approved registry pull secret in the namespace and set `imagePullSecrets: [{name: your-pull-secret}]`; do not put credentials in values or Git. Alternatively override `image.repository` with your own published image.
 
 After image access is confirmed, install the private demo:
 
 ```bash
-helm upgrade --install optipool optipool/optipool --version 0.1.0 \
+helm upgrade --install optipool optipool/optipool --version 0.2.0 \
   --kube-context YOUR_CONTEXT --namespace optipool --create-namespace --wait --timeout 10m
 helm test optipool --kube-context YOUR_CONTEXT --namespace optipool --logs
 ```
@@ -29,7 +29,7 @@ helm test optipool --kube-context YOUR_CONTEXT --namespace optipool --logs
 For building the chart and image yourself:
 
 ```bash
-docker build -t optipool:0.1.0 .
+docker build -t optipool:0.2.0 .
 helm lint charts/optipool
 helm template demo charts/optipool
 helm package charts/optipool --destination /tmp
@@ -56,7 +56,7 @@ Use [Workload Identity](https://docs.cloud.google.com/kubernetes-engine/docs/how
 Prepare an ignored `production-values.yaml` based on [values-gke.example.yaml](../charts/optipool/values-gke.example.yaml). It contains placeholders only. Do not commit real domain/project/identity configuration or OAuth secret contents.
 
 ```bash
-helm upgrade --install optipool /tmp/optipool-0.1.0.tgz --namespace optipool --create-namespace -f production-values.yaml --wait --timeout 10m
+helm upgrade --install optipool /tmp/optipool-0.2.0.tgz --namespace optipool --create-namespace -f production-values.yaml --wait --timeout 10m
 helm test optipool --namespace optipool --logs
 ```
 
@@ -69,7 +69,7 @@ Choose an explicit `--kube-context` for your hosting cluster. The chart uses one
 3. Package/install the new chart using the same release/namespace/PVC. Recreate briefly stops service.
 4. Run Helm tests, inspect logs and verify saved snapshot/estimate IDs persist.
 
-Schema v1 is created idempotently. This version introduces no destructive migration. Future schema changes need explicit upgrade and restore testing. **Helm rollback changes Kubernetes resources; it does not reverse a SQLite migration.** Restore the pre-upgrade database and compatible application only when necessary and with downtime.
+Schema v1 is created idempotently. Version 0.2.0 adds derived snapshot_core storage and indexes without destructive migration. Legacy snapshots stay readable; missing cadence/status data remain unknown until explicit refresh. Future schema changes need explicit upgrade and restore testing. **Helm rollback changes Kubernetes resources; it does not reverse a SQLite migration.** Restore the pre-upgrade database and compatible application only when necessary and with downtime.
 
 ## Uninstall and storage
 
@@ -81,4 +81,4 @@ Retained PVCs still incur storage costs. Inspect and back up them before decidin
 
 The public Helm repository is served from `docs/helm` on `main`, with packages addressed through their version Git tags. To publish a new version, update app/chart versions, record release notes, package the reviewed chart into `docs/helm`, write its checksum, and merge the old index with `helm repo index --merge` so older versions remain available. Never replace an existing version archive or move a release tag. Update the current Helm testing script's version references for the new release.
 
-Push the reviewed commit and version tag (for example `v0.1.0`). The tag-triggered release workflow first runs the complete application/browser/Kind verification workflow, then publishes the amd64/arm64 image to GHCR and uploads the checked-in chart/checksum and exact image digest to a GitHub release. It uses the scoped Actions token; no personal registry password is stored in the repository. Container package visibility is a separate owner setting. Before enabling production collection, satisfy the live acceptance gate; publishing artifacts does not establish production readiness.
+Push the reviewed commit and version tag (for example `v0.2.0`). The tag-triggered release workflow first runs the complete application/browser/Kind verification workflow, then publishes the amd64/arm64 image to GHCR and uploads the checked-in chart/checksum and exact image digest to a GitHub release. It uses the scoped Actions token; no personal registry password is stored in the repository. Container package visibility is a separate owner setting. Before enabling production collection, satisfy the live acceptance gate; publishing artifacts does not establish production readiness.

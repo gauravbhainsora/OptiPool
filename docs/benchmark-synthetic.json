@@ -1,5 +1,5 @@
 {
-  "recorded_at": "2026-10-11T18:09:07.542981+00:00",
+  "recorded_at": "2026-10-11T19:40:23.545967+00:00",
   "scope": "2x synthetic demo only",
   "concurrent_users": 20,
   "pools": 16,
@@ -8,8 +8,8 @@
   "replicas_per_estimate": 6,
   "cached_requests": 100,
   "estimate_requests": 40,
-  "cached_p95_seconds": 0.3529633327081683,
-  "estimate_p95_seconds": 0.172403161037073,
+  "cached_p95_seconds": 0.13530230835458495,
+  "estimate_p95_seconds": 0.07053313751966925,
   "cloud_calls_during_benchmark": 0,
   "runtime": "Python 3.13.5 / Darwin arm64",
   "limitation": "In-process API benchmark with synthetic inventory; excludes network/IAP/browser and actual GCP scale"

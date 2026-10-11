@@ -20,10 +20,10 @@ Use `python3` on platforms where it resolves to Python 3.13+. Dependency version
 1. Open http://127.0.0.1:8000. Confirm **DEMO DATA**, four synthetic projects and eight saved pools.
 2. Filter project/cluster and select a pool. Open Nodes, inspect budgets and labels.
 3. Open Workloads. Move the 1–10 day slider; the cutoff stays saved. Inspect the individual Pod table and search by Pod or node.
-4. Export node pools, workloads and Pods as CSV and Excel. Confirm rows, units, synthetic indicator, snapshot ID/time, and the workload day window.
+4. Review request recommendations at several headroom values; expand Pod details for saved usage, container resources and evidence. Export node pools, workloads and Pods as CSV and Excel. Confirm rows, units, synthetic indicator, snapshot ID/time, and the workload/Pod day window.
 5. Open Capacity planner. The form names the target pool. Estimate `500m`, `1Gi`, six replicas; then try ten replicas at `2` CPU cores, and one Pod at `100Gi` memory. Observe Fits, Needs nodes and a blocked machine shape. Review added-node cost and autoscaler restrictions.
 6. Paste a Deployment with hard anti-affinity or a PVC. Supported rules constrain placement; unresolved storage/admission features produce Cannot fully assess.
-7. Save the snapshot IDs for two pools. Fetch one pool and verify only its ID changes. Refresh project inventory and verify neither existing snapshot changes.
+7. Try combined HPA/surge mode and zone spreading; inspect peak counts, per-node budgets and placement reasons. Save the snapshot IDs for two pools. Fetch one pool and verify only its ID changes. Compare the two saved observations for the refreshed pool. Refresh project inventory and verify neither existing snapshot changes.
 8. Stop/restart the API. Existing IDs and saved estimates survive; no automatic refresh occurs after initialization.
 
 ## Automated checks
@@ -48,18 +48,18 @@ Start Docker, then:
 bash scripts/kind-test.sh
 ```
 
-The script builds `optipool:0.1.0`, creates a unique disposable Kind cluster with Kubernetes 1.32.2, loads the local image, packages and installs the chart, runs its smoke hook and HTTP flows, restarts the app and upgrades to a temporary chart 0.1.1 while asserting snapshot IDs persist. It checks uninstall retains the PVC, then removes only its own disposable cluster. Do not use this script against a live cluster. Local port 18080 must be free.
+The script builds `optipool:0.2.0`, creates a unique disposable Kind cluster with Kubernetes 1.32.2, loads the local image, packages and installs the chart, runs its smoke hook and HTTP flows, restarts the app and upgrades to a temporary higher patch lifecycle chart while asserting snapshot IDs persist. It checks uninstall retains the PVC, then removes only its own disposable cluster. Do not use this script against a live cluster. Local port 18080 must be free.
 
 Chart schema checks reject two replicas, `latest` images and ingress with local auth. Ingress rendering with IAP is tested; Kind cannot validate GKE BackendConfig behavior or organization IAM. Hook Pods persist for log inspection until the next Helm test, or explicit removal/cluster cleanup.
 
 For a reusable local installation:
 
 ```bash
-docker build -t optipool:0.1.0 .
+docker build -t optipool:0.2.0 .
 kind create cluster --name optipool-local --image kindest/node:v1.32.2
-kind load docker-image optipool:0.1.0 --name optipool-local
+kind load docker-image optipool:0.2.0 --name optipool-local
 helm package charts/optipool --destination /tmp
-helm install demo /tmp/optipool-0.1.0.tgz --kube-context kind-optipool-local --namespace optipool --create-namespace --set image.pullPolicy=Never --wait
+helm install demo /tmp/optipool-0.2.0.tgz --kube-context kind-optipool-local --namespace optipool --create-namespace --set image.repository=optipool --set image.pullPolicy=Never --wait
 kubectl --context kind-optipool-local -n optipool port-forward service/demo-optipool 8000:80
 ```
 

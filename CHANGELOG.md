@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0 — 12 October 2026
+
+- Advisory Deployment request proposals with configurable headroom, saved coverage, sampled memory-peak floors and OOM/restart review guards.
+- Per-Pod saved latest usage/p99, timestamps, container resources, conditions and termination evidence; selected-window CSV/Excel exports.
+- HPA maximum and rollout-surge envelopes, hard zone spread, node placement/budget visuals, rejection reasons and freshness disclosures.
+- Same-pool saved-snapshot comparisons without live collection.
+- Nullable manifest resource normalization and explicit inapplicable/unavailable CUD quotes.
+- Single-query inventory/pool lookup, compact pool exports and planning-core storage, a 64 MiB immutable saved-view response cache, debounced window loads and shorter SQLite lock sections.
+- Bounded concurrent cloud reads, connection reuse per worker, transient GET retries, selected-pool GMP query batches and indexed normalization.
+- Self-contained architecture/build handoff maintained through repository agent instructions.
+
 ## 0.1.0 — initial implementation
 
 - React dashboard with project/cluster/pool selection and pool, node, workload and individual-Pod views.
