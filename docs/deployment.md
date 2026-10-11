@@ -4,6 +4,28 @@ The chart/app start at 0.1.0. Chart `version` is package SemVer; quoted `appVers
 
 ## Private demo deployment
 
+Pull the public chart:
+
+```bash
+helm repo add optipool https://raw.githubusercontent.com/gauravbhainsora/OptiPool/main/docs/helm
+helm repo update
+helm pull optipool/optipool --version 0.1.0
+```
+
+The repository index includes a SHA256 digest and points to the archive at the immutable `v0.1.0` Git tag. The release also carries a checksum file and an `image-digest.txt` containing the exact multi-platform image reference. The default image repository is `ghcr.io/gauravbhainsora/optipool`.
+
+GitHub initializes new container packages as private. The repository owner should open [the image package](https://github.com/users/gauravbhainsora/packages/container/package/optipool), then **Package settings → Change visibility → Public** for anonymous image pulls. Verify with `docker pull ghcr.io/gauravbhainsora/optipool:0.1.0` without registry credentials. Chart downloads are public independently of this setting. If keeping the image private, pre-create an approved registry pull secret in the namespace and set `imagePullSecrets: [{name: your-pull-secret}]`; do not put credentials in values or Git. Alternatively override `image.repository` with your own published image.
+
+After image access is confirmed, install the private demo:
+
+```bash
+helm upgrade --install optipool optipool/optipool --version 0.1.0 \
+  --kube-context YOUR_CONTEXT --namespace optipool --create-namespace --wait --timeout 10m
+helm test optipool --kube-context YOUR_CONTEXT --namespace optipool --logs
+```
+
+For building the chart and image yourself:
+
 ```bash
 docker build -t optipool:0.1.0 .
 helm lint charts/optipool
@@ -55,4 +77,6 @@ Retained PVCs still incur storage costs. Inspect and back up them before decidin
 
 ## Publishing
 
-Local packaging is separate from publication. Before the first Git push, satisfy [release-readiness.md](release-readiness.md). Before a production release, satisfy the live acceptance gate. No public image/chart release is created by the included CI. Publish an immutable image, tag the application release, package the independently versioned chart, then upload it to your selected chart/OCI distribution channel after reviewing artifact versions and destination.
+The public Helm repository is served from `docs/helm` on `main`, with packages addressed through their version Git tags. To publish a new version, update app/chart versions, record release notes, package the reviewed chart into `docs/helm`, write its checksum, and merge the old index with `helm repo index --merge` so older versions remain available. Never replace an existing version archive or move a release tag. Update the current Helm testing script's version references for the new release.
+
+Push the reviewed commit and version tag (for example `v0.1.0`). The tag-triggered release workflow first runs the complete application/browser/Kind verification workflow, then publishes the amd64/arm64 image to GHCR and uploads the checked-in chart/checksum and exact image digest to a GitHub release. It uses the scoped Actions token; no personal registry password is stored in the repository. Container package visibility is a separate owner setting. Before enabling production collection, satisfy the live acceptance gate; publishing artifacts does not establish production readiness.

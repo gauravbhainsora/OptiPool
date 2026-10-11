@@ -54,6 +54,16 @@ The second command builds the image and installs the packaged chart in its own d
 
 Deployment uses [charts/optipool](charts/optipool), version **0.1.0**, app version **0.1.0**. SQLite has one database-owning process and one replica on a durable block volume. The chart enforces this and uses Recreate updates. Defaults are a private demo; public ingress requires signed IAP authentication.
 
+Pull the published chart without cloning the source:
+
+```bash
+helm repo add optipool https://raw.githubusercontent.com/gauravbhainsora/OptiPool/main/docs/helm
+helm repo update
+helm pull optipool/optipool --version 0.1.0
+```
+
+The container image is `ghcr.io/gauravbhainsora/optipool:0.1.0`. New GHCR packages start private; anonymous container pulls require the owner to make the image package public. See the [deployment guide](docs/deployment.md) for image access, installation and production prerequisites.
+
 Read the [local testing guide](docs/testing.md), [configuration and live collector guide](docs/configuration.md), [GKE deployment guide](docs/deployment.md), [backup/restore guide](docs/operations.md), [scheduling support matrix](docs/estimation.md), and [verification evidence](docs/verification.md).
 
 ## Scope and limitations

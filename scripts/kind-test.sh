@@ -18,7 +18,7 @@ kind create cluster --name "$task_cluster" --image kindest/node:v1.32.2 --wait 1
 kind load docker-image optipool:0.1.0 --name "$task_cluster"
 helm package charts/optipool --destination "$task_dir"
 helm install demo "$task_dir/optipool-0.1.0.tgz" --kube-context "kind-$task_cluster" \
-  --namespace optipool --create-namespace --set image.pullPolicy=Never --wait --timeout 180s
+  --namespace optipool --create-namespace --set image.repository=optipool --set image.pullPolicy=Never --wait --timeout 180s
 helm test demo --kube-context "kind-$task_cluster" --namespace optipool --logs --timeout 120s
 kubectl --context "kind-$task_cluster" -n optipool port-forward service/demo-optipool 18080:80 >"$task_dir/forward.log" 2>&1 &
 port_forward_pid=$!
@@ -38,7 +38,7 @@ sed 's/^version: 0.1.0$/version: 0.1.1/' "$task_dir/chart/Chart.yaml" > "$task_d
 mv "$task_dir/Chart.yaml" "$task_dir/chart/Chart.yaml"
 helm package "$task_dir/chart" --destination "$task_dir"
 helm upgrade demo "$task_dir/optipool-0.1.1.tgz" --kube-context "kind-$task_cluster" \
-  --namespace optipool --set image.pullPolicy=Never --wait --timeout 180s
+  --namespace optipool --set image.repository=optipool --set image.pullPolicy=Never --wait --timeout 180s
 helm test demo --kube-context "kind-$task_cluster" --namespace optipool --logs --timeout 120s
 kubectl --context "kind-$task_cluster" -n optipool port-forward service/demo-optipool 18080:80 >"$task_dir/forward.log" 2>&1 &
 port_forward_pid=$!

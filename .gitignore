@@ -16,6 +16,7 @@ config.local.yaml
 production-values.yaml
 *-private.yaml
 *.tgz
+!docs/helm/optipool-*.tgz
 .DS_Store
 coverage/
 playwright-report/

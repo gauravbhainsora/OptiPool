@@ -1,7 +1,7 @@
 # Defaults run an isolated demo. Enable IAP before exposing an ingress.
 replicaCount: 1
 image:
-  repository: optipool
+  repository: ghcr.io/gauravbhainsora/optipool
   tag: "0.1.0"
   digest: ""
   pullPolicy: IfNotPresent
