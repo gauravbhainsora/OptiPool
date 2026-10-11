@@ -1,0 +1,25 @@
+# Placeholders only. Copy to an ignored file and supply approved real values.
+image:
+  repository: REGION-docker.pkg.dev/HOST_PROJECT/REPOSITORY/optipool
+  tag: "0.1.0"
+config:
+  mode: live
+  auth_mode: iap
+  iap_audience: /projects/PROJECT_NUMBER/global/backendServices/BACKEND_SERVICE_ID
+  database: /data/optipool.db
+  project_allowlist: []
+  environment:
+    EXAMPLE_DEV_PROJECT: nonproduction
+  default_environment: production
+  live_validation_complete: false
+serviceAccount:
+  annotations:
+    iam.gke.io/gcp-service-account: COLLECTOR_EMAIL
+persistence:
+  storageClass: premium-rwo
+  size: 20Gi
+ingress:
+  enabled: true
+  host: optipool.example.org
+  managedCertificate: optipool-certificate
+  iapOAuthSecret: optipool-iap-oauth

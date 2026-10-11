@@ -1,0 +1,47 @@
+# Defaults run an isolated demo. Enable IAP before exposing an ingress.
+replicaCount: 1
+image:
+  repository: optipool
+  tag: "0.1.0"
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+config:
+  mode: demo
+  auth_mode: local
+  iap_audience: ""
+  database: /data/optipool.db
+  project_allowlist: []
+  environment: {}
+  default_environment: production
+  live_validation_complete: false
+  min_metric_samples: 20
+  max_added_nodes: 100
+  pricing_mappings: {}
+persistence:
+  size: 20Gi
+  storageClass: ""
+  existingClaim: ""
+  retain: true
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+service:
+  port: 80
+ingress:
+  enabled: false
+  host: ""
+  managedCertificate: ""
+  # A pre-created OAuth secret. Never put its contents in values or Git.
+  iapOAuthSecret: ""
+nodeSelector: {}
+tolerations: []
+affinity: {}

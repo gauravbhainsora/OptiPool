@@ -1,0 +1,8 @@
+OptiPool {{ .Chart.AppVersion }} · chart {{ .Chart.Version }}
+One application instance owns SQLite. Recreate updates briefly interrupt service.
+For private local access:
+  kubectl -n {{ .Release.Namespace }} port-forward service/{{ include "optipool.name" . }} 8000:{{ .Values.service.port }}
+  Open http://127.0.0.1:8000
+{{ if .Values.persistence.retain }}The chart PVC is retained on uninstall. Back it up consistently before upgrades.{{ end }}
+Live cloud collection requires Workload Identity, read permissions, network reachability,
+environment classification, and nonproduction validation before production enablement.

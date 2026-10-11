@@ -1,0 +1,9 @@
+OptiPool
+Copyright 2026 Gaurav Bhainsora and contributors
+
+This project is licensed under the Apache License, Version 2.0.
+Third-party dependencies retain their respective licenses and notices.
+
+The bundled DM Sans and Manrope fonts are distributed under the SIL Open
+Font License 1.1. Their original copyright and license texts are preserved
+in frontend/public/licenses/ and included in the dashboard distribution.

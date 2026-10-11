@@ -1,0 +1,3 @@
+# Collect cloud observations using a service account
+
+The dashboard provides shared access to saved observations across the configured projects. Cloud data collection uses a service account, rather than depending on each dashboard user's personal gcloud credentials. This separates the collection identity from dashboard users; the application must define its own audience and access policy because a viewer's personal cloud permissions do not determine visibility of shared saved data. Service-account permissions, runtime credential provisioning, and the dashboard's access policy remain to be specified.

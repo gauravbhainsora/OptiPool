@@ -1,0 +1,12 @@
+{{- if and (eq .Values.config.auth_mode "iap") (not .Values.config.iap_audience) }}
+{{- fail "config.iap_audience is required for IAP authentication" }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "optipool.name" . }}
+  labels:
+    {{- include "optipool.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    {{- toYaml .Values.config | nindent 4 }}

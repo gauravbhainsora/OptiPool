@@ -1,0 +1,3 @@
+# Evaluate usage windows from saved monitoring history
+
+Users need to explore one to ten days of resource usage while retaining explicit control over cloud collection. A manual pool refresh imports up to ten days of available monitoring history; the day slider evaluates saved data ending at that history's cutoff and does not initiate cloud requests. This requires retaining enough historical metric data to recompute usage summaries, and means the displayed window ends at collection time rather than automatically advancing with the current time. Inventory configuration remains tied to a separately identified saved snapshot.

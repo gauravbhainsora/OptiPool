@@ -1,0 +1,9 @@
+apiVersion: v2
+name: optipool
+description: Saved GKE node-pool observations and conservative capacity planning
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/gauravbhainsora/OptiPool
+sources:
+  - https://github.com/gauravbhainsora/OptiPool

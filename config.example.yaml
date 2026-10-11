@@ -1,0 +1,16 @@
+# Copy to config.local.yaml (ignored by Git). Demo requires no credentials.
+mode: demo
+auth_mode: local
+database: data/optipool.db
+# In live mode, empty discovers all ACTIVE projects accessible to the collector.
+project_allowlist: []
+# Explicit inheritance, pool override wins. Unclassified live pools default to production.
+environment:
+  example-dev-project: nonproduction
+  example-prod-project/example-cluster/sandbox-pool: nonproduction
+default_environment: production
+live_validation_complete: false
+min_metric_samples: 20
+max_added_nodes: 100
+max_replicas: 2000
+pricing_mappings: {}

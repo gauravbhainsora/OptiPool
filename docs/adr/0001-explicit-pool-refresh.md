@@ -1,0 +1,3 @@
+# Read saved observations and refresh explicitly per node pool
+
+The dashboard spans multiple GCP projects and clusters. Following initial collection, dashboard reads use saved observations; fresh collection occurs only when a user requests it for a selected node pool, and replaces observations only for that pool. This gives the user explicit control over when a pool's saved data changes, at the cost of potentially stale capacity estimates. A refresh may collect supporting cluster context needed for affinity, storage, and related checks, but attaches it to the selected pool snapshot without replacing other pool snapshots. A separate explicit inventory action discovers clusters and pools without refreshing existing pool snapshots.

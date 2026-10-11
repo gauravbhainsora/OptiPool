@@ -1,0 +1,39 @@
+{{- if .Values.ingress.enabled }}
+{{- if ne .Values.config.auth_mode "iap" }}
+{{- fail "Ingress requires config.auth_mode=iap; local access must stay private" }}
+{{- end }}
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: {{ include "optipool.name" . }}
+spec:
+  iap:
+    enabled: true
+    oauthclientCredentials:
+      secretName: {{ required "ingress.iapOAuthSecret must reference an existing secret" .Values.ingress.iapOAuthSecret }}
+  healthCheck:
+    type: HTTP
+    requestPath: /healthz
+    port: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "optipool.name" . }}
+  annotations:
+    kubernetes.io/ingress.class: gce
+    kubernetes.io/ingress.allow-http: "false"
+    networking.gke.io/managed-certificates: {{ required "ingress.managedCertificate must reference an existing ManagedCertificate" .Values.ingress.managedCertificate | quote }}
+spec:
+  rules:
+    - host: {{ required "ingress.host is required" .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "optipool.name" . }}
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}
