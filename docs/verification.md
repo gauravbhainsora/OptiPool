@@ -37,7 +37,8 @@ Artifact publication does not replace the pending live acceptance below.
 - Three browser flows passed: recommendations/Pod detail/window/export/peak scenario/comparison, CUD status display, and mobile overflow. TypeScript/Vite, Ruff, Prettier and chart lint/render/schema checks passed.
 - Latest 20-user synthetic run: saved-view p95 **0.135s**, ordinary estimate p95 **0.071s**; 16 pools, 40 nodes and 160 Pods, with zero collection during read/estimate workloads. Compact planning cores avoid parsing unused usage histories. These figures do not establish live-cloud or actual-inventory performance.
 - Matching v0.2.0 image/chart passed Docker Desktop / Kind install, Helm and HTTP analytics/scenario smoke checks, restart persistence and temporary 0.2.1-lifecycle.1 upgrade with identical saved IDs. Uninstall retained the PVC; the disposable cluster was removed.
-- New-release publication checks remain pending; exact status is maintained in [the build plan](BUILD_PLAN.md).
+- The [v0.2.0 release workflow](https://github.com/gauravbhainsora/OptiPool/actions/runs/38169391627) and main verification run `38169367740` passed. The [public release](https://github.com/gauravbhainsora/OptiPool/releases/tag/v0.2.0) has matching chart/checksum/image-digest assets.
+- Anonymous Helm repository add/update/pull verifies 0.2.0 and unchanged 0.1.0. Chart 0.2.0 SHA256: `4fffdebf28d4ba6bd015fd1bbbcbdffb7d2cfbd26c31fbbc54fa7da331332730`. Anonymous GHCR manifest access includes AMD64 and ARM64 and matches `sha256:5cbcc2a5a27c34a49d555a8310a09cdda63b790be0033e1441710c79216897c3`. The final handoff is in [the build plan](BUILD_PLAN.md).
 
 ## Pending production acceptance (unchanged)
 

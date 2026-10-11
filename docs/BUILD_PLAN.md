@@ -12,21 +12,21 @@ The user originally described four GCP projects, then chose **dynamic discovery*
 
 ### Current work and next steps
 
-The user authorized the fixes, all suggested features, Docker Desktop cluster testing, performance improvements, committing/pushing the completed work and publishing a new release after verification. Continue to publication; do not stop after preparing files.
+The user authorized the fixes, all suggested features, Docker Desktop cluster testing, performance improvements, committing/pushing the completed work and publishing a new release after verification. This build is complete and **v0.2.0 is published**. The user plans to continue later; use the next-session checkpoint below.
 
 | Work | Current status | Evidence / remaining work |
 |---|---|---|
 | v0.1.0 original dashboard and distribution | Released | Immutable artifacts remain available; section 10 |
-| Nullable manifest resources and CUD eligibility fixes | Verified locally | Domain, HTTP and browser cases cover null/invalid fields and Not applicable/Unavailable/valid zero quotes |
-| Request recommendations | Verified locally | Configurable headroom, sampled peak floor, actual selected-replica deltas, sparse/missing coverage and OOM/restart guards |
-| Richer Pod drill-downs and exports | Verified locally | Saved latest usage/p99, timestamps, container resources and captured status evidence; window/snapshot-pinned CSV/XLSX |
-| Rollout/HPA/zone scenarios and explanations | Verified locally | Peak bounds/rounding, hard spread/domains, before/after budgets, placement/rejections and freshness; browser flow passes |
-| Saved-snapshot comparisons | Verified locally | UID identity, resource/status changes, cross-pool rejection and no collection on read |
-| Fetch/loading optimization | Verified locally | Single-query inventory, bounded immutable response cache, compact planning core, four concurrent cloud reads, scoped GMP batches and exact freshness checks |
-| Application/build/browser/style checks | Passed locally | **71 backend tests, 3 browser flows**, TypeScript/Vite, Ruff, Prettier and Helm lint/render/schema checks |
+| Nullable manifest resources and CUD eligibility fixes | Verified locally and in CI | Domain, HTTP and browser cases cover null/invalid fields and Not applicable/Unavailable/valid zero quotes |
+| Request recommendations | Verified locally and in CI | Configurable headroom, sampled peak floor, actual selected-replica deltas, sparse/missing coverage and OOM/restart guards |
+| Richer Pod drill-downs and exports | Verified locally and in CI | Saved latest usage/p99, timestamps, container resources and captured status evidence; window/snapshot-pinned CSV/XLSX |
+| Rollout/HPA/zone scenarios and explanations | Verified locally and in CI | Peak bounds/rounding, hard spread/domains, before/after budgets, placement/rejections and freshness; browser flow passes |
+| Saved-snapshot comparisons | Verified locally and in CI | UID identity, resource/status changes, cross-pool rejection and no collection on read |
+| Fetch/loading optimization | Verified locally and in CI | Single-query inventory, bounded immutable response cache, compact planning core, four concurrent cloud reads, scoped GMP batches and exact freshness checks |
+| Application/build/browser/style checks | Passed locally and in CI | **71 backend tests, 3 browser flows**, TypeScript/Vite, Ruff, Prettier and Helm lint/render/schema checks |
 | Docker Desktop / Kind v0.2.0 lifecycle | Passed locally | Matching 0.2.0 image/chart installed; HTTP analytics/scenario smoke, Helm tests, restart and temporary 0.2.1-lifecycle.1 upgrade retained exact IDs; uninstall kept PVC; disposable cluster removed |
 | Live nonproduction/GKE acceptance | Pending operator prerequisites | Service account/access/networking, actual metrics/prices, IAP, backups and inventory-sized load |
-| v0.2.0 publication | Prepared, not yet published | App/chart/image versions aligned; chart archived and index preserves 0.1.0; commit/push/tag and CI/image/release verification pending |
+| v0.2.0 publication | Released and verified | Commit `f6439f3`, tag `v0.2.0`; release workflow `38169391627` and main verification `38169367740` passed; public Helm pull/release checksums and anonymous AMD64/ARM64 image manifest verified |
 
 Latest synthetic benchmark: 20 concurrent users, 16 pools, 40 nodes and 160 Pods; saved-view p95 **0.135s**, estimate p95 **0.071s**, zero cloud calls during the workload. These are fixture measurements, not live network/IAP or actual-inventory acceptance. Performance varies by load and machine; no claim of globally optimal scheduling or fastest possible collection is made.
 
@@ -190,22 +190,30 @@ Real acceptance must check collector IAM/RBAC, control-plane networking, actual 
 
 ## 10. Published distribution and release discipline
 
-Released app/chart version: **0.1.0**; **0.2.0 is prepared, publication pending**. Immutable source tag: `v0.1.0` (commit `25a2d95`); publication verification docs were later committed at `909f725`. The v0.2.0 chart SHA256 is `4fffdebf28d4ba6bd015fd1bbbcbdffb7d2cfbd26c31fbbc54fa7da331332730`. Do not mark it released until CI, public chart/image and release assets are verified.
+Released app/chart version: **0.2.0**, immutable source tag `v0.2.0` at commit `f6439f3d9606ff0c39f092b9356fed11f5c27b6a`. Public release: `https://github.com/gauravbhainsora/OptiPool/releases/tag/v0.2.0`. Release workflow `https://github.com/gauravbhainsora/OptiPool/actions/runs/38169391627` and main verification `38169367740` succeeded. Chart SHA256: `4fffdebf28d4ba6bd015fd1bbbcbdffb7d2cfbd26c31fbbc54fa7da331332730`. Public multi-platform image digest: `sha256:5cbcc2a5a27c34a49d555a8310a09cdda63b790be0033e1441710c79216897c3`.
+
+Anonymous `helm repo add/update/pull` verified both 0.2.0 and unchanged 0.1.0 archives. Release archive/checksum and image-digest assets match the public artifacts. Anonymous GHCR index access includes Linux AMD64 and ARM64. This verifies distribution and synthetic test gates, not live production acceptance.
 
 ```bash
 helm repo add optipool https://raw.githubusercontent.com/gauravbhainsora/OptiPool/main/docs/helm
 helm repo update
-helm pull optipool/optipool --version 0.1.0
-docker pull ghcr.io/gauravbhainsora/optipool:0.1.0
+helm pull optipool/optipool --version 0.2.0
+docker pull ghcr.io/gauravbhainsora/optipool:0.2.0
 ```
 
-Public release: `https://github.com/gauravbhainsora/OptiPool/releases/tag/v0.1.0`. Chart archive SHA256: `13791f414e33176ee08060db50a73fd6c4047582b5d4741704d088e96479a309`. Multi-platform image digest: `sha256:e4ba2ca19c82aeb24183510d830850bfd8856830a26c753955574070f12056f2`. Linux AMD64/ARM64 anonymous access and release asset checksums were verified. Release workflow run `38165629349` passed.
+Previous release remains immutable: `v0.1.0`, source `25a2d95`, publication documentation `909f725`. Public release: `https://github.com/gauravbhainsora/OptiPool/releases/tag/v0.1.0`. Chart archive SHA256: `13791f414e33176ee08060db50a73fd6c4047582b5d4741704d088e96479a309`. Multi-platform image digest: `sha256:e4ba2ca19c82aeb24183510d830850bfd8856830a26c753955574070f12056f2`. Linux AMD64/ARM64 anonymous access and release asset checksums were verified. Release workflow run `38165629349` passed.
 
 Helm repository index is `docs/helm/index.yaml` on main, with version-tagged package URLs. The checked-in chart archive is intentionally tracked. Tag-triggered release workflow first reuses full CI, verifies the archive against source and checksum, builds/pushes the image through the scoped Actions token, then publishes GitHub release assets and digest. New GHCR packages initially require an owner visibility setting; existing OptiPool image is public. No personal token is stored in the repo.
 
 Helm uses one replica/worker, Recreate updates, nonroot user 10001, a read-only root filesystem, temporary volume, health/readiness probes and a durable RWO PVC (default 20Gi). Default service is private ClusterIP/demo; ingress requires IAP audience, existing HTTPS certificate/domain and OAuth secret. Configure Kubernetes ServiceAccount/Workload Identity externally approved grants. Default PVC survives uninstall; Kind cluster deletion removes its local volume regardless. Future schema migration/rollback requires explicit data compatibility and restore tests.
 
-## 11. Maintenance instructions for the next agent
+## 11. Next-session checkpoint
+
+The feature source commit is `f6439f3d9606ff0c39f092b9356fed11f5c27b6a`, on main and tagged v0.2.0. Release workflow: `https://github.com/gauravbhainsora/OptiPool/actions/runs/38169391627`. Main verification: `https://github.com/gauravbhainsora/OptiPool/actions/runs/38169367740`. Both workflows passed. The release, public chart downloads/checksums and anonymous multi-platform image manifest were verified. The final documentation checkpoint is pushed after this verification; `git log` identifies its commit separately from the immutable feature tag. The localhost:8000 preview serves v0.2.0 from the existing saved demo DB. No real credentials or observations were supplied or collected.
+
+All requested local product additions and performance changes are implemented, tested, pushed and released. No current build/publication work remains. The next engineering work needs the operator's collector identity and approved nonproduction access: real collection/attribution/pricing validation, target-sized load and refresh measurements, IAP/Workload Identity deployment and off-volume backup drills. Avoid inventing real project IDs or billing prices. Keep using synthetic fixtures until those prerequisites arrive. Consider further scheduling/search or large-inventory changes only against measured production-scale evidence, retaining conditional outcomes for unsupported behavior.
+
+## 12. Maintenance instructions for the next agent
 
 Read this file before changing architecture, collection, estimation, deployment or roadmap scope. Inspect actual code and Git status to confirm the checkout state; the status table is a checkpoint, not evidence that an unrun test passes. Keep user-approved contracts intact. Continue existing authorized work instead of restarting or discarding local changes.
 
