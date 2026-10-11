@@ -62,7 +62,7 @@ helm repo update
 helm pull optipool/optipool --version 0.1.0
 ```
 
-The container image is `ghcr.io/gauravbhainsora/optipool:0.1.0`. New GHCR packages start private; anonymous container pulls require the owner to make the image package public. See the [deployment guide](docs/deployment.md) for image access, installation and production prerequisites.
+The public container image is `ghcr.io/gauravbhainsora/optipool:0.1.0`, available for Linux AMD64 and ARM64. The [0.1.0 release](https://github.com/gauravbhainsora/OptiPool/releases/tag/v0.1.0) includes the chart, checksum and exact image digest. Anonymous chart and image access were verified; see the [deployment guide](docs/deployment.md) for installation and production prerequisites.
 
 Read the [local testing guide](docs/testing.md), [configuration and live collector guide](docs/configuration.md), [GKE deployment guide](docs/deployment.md), [backup/restore guide](docs/operations.md), [scheduling support matrix](docs/estimation.md), and [verification evidence](docs/verification.md).
 

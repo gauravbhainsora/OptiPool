@@ -14,6 +14,8 @@ helm pull optipool/optipool --version 0.1.0
 
 The repository index includes a SHA256 digest and points to the archive at the immutable `v0.1.0` Git tag. The release also carries a checksum file and an `image-digest.txt` containing the exact multi-platform image reference. The default image repository is `ghcr.io/gauravbhainsora/optipool`.
 
+Release 0.1.0 is public: anonymous Helm package download and GHCR access for both Linux AMD64 and ARM64 were verified on 12 October 2026. The following visibility step applies when publishing a new package or using a private registry.
+
 GitHub initializes new container packages as private. The repository owner should open [the image package](https://github.com/users/gauravbhainsora/packages/container/package/optipool), then **Package settings → Change visibility → Public** for anonymous image pulls. Verify with `docker pull ghcr.io/gauravbhainsora/optipool:0.1.0` without registry credentials. Chart downloads are public independently of this setting. If keeping the image private, pre-create an approved registry pull secret in the namespace and set `imagePullSecrets: [{name: your-pull-secret}]`; do not put credentials in values or Git. Alternatively override `image.repository` with your own published image.
 
 After image access is confirmed, install the private demo:

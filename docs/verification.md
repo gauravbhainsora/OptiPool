@@ -21,6 +21,16 @@ The first benchmark exposed repeated full-snapshot decoding in the inventory end
 
 The test dependency emits a Starlette deprecation warning for its current HTTPX-backed TestClient. Tests pass; migration to the future HTTPX2 test integration remains a dependency-maintenance item. Browser test output also includes the runner's FORCE_COLOR/NO_COLOR warning. Neither is a failed assertion.
 
+## Published distribution: 12 October 2026
+
+The [v0.1.0 publication workflow](https://github.com/gauravbhainsora/OptiPool/actions/runs/38165629349) passed its application/browser/benchmark and Kind lifecycle gates, then published the image and [GitHub release](https://github.com/gauravbhainsora/OptiPool/releases/tag/v0.1.0).
+
+- `helm repo add`, repository update, and `helm pull optipool/optipool --version 0.1.0` succeeded against the public repository without credentials. The downloaded archive matches SHA256 `13791f414e33176ee08060db50a73fd6c4047582b5d4741704d088e96479a309`.
+- The public GitHub release archive/checksum match the same package, and its `image-digest.txt` matches the GHCR image.
+- Anonymous GHCR manifest access succeeds and includes Linux AMD64 and ARM64. The published image digest is `sha256:e4ba2ca19c82aeb24183510d830850bfd8856830a26c753955574070f12056f2`.
+
+Artifact publication does not replace the pending live acceptance below.
+
 ## Pending production acceptance
 
 - Collector service-account identity and approved IAM/RBAC are supplied/provisioned by the operator.
