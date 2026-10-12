@@ -112,6 +112,7 @@ def design(snapshots, scenario: PoolDesign, max_added=100, max_replicas=2000):
     recommended = next((c["profile"]["pool_id"] for c in candidates if c["complete"]), None)
     return {
         "kind": "node_pool_design",
+        "inputs": scenario.model_dump(),
         "project": scenario.project,
         "location": scenario.location,
         "cluster": scenario.cluster,

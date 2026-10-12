@@ -106,6 +106,8 @@ def test_design_uses_empty_pool_saved_overhead_prices_and_provenance(saved):
     original = deepcopy(saved)
     report = design([saved], design_input(saved))
     candidate = report["candidates"][0]
+    assert report["inputs"]["services"][0]["cpu"] == "1"
+    assert report["inputs"]["snapshots"] == {saved["pool"]["id"]: saved["id"]}
     assert candidate["complete"] and candidate["configuration"]["total_nodes"] == 2
     assert sum(candidate["configuration"]["nodes_by_zone"].values()) == 2
     assert all(n["planned"] for n in candidate["assessment"]["node_budgets"])
