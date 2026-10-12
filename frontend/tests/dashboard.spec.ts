@@ -470,3 +470,47 @@ test("new node pool design compares saved profiles, downloads and restores histo
   ).toEqual(before.pools.map((p: { snapshot_id: string }) => p.snapshot_id));
   expect(errors).toEqual([]);
 });
+
+test("saved workload and Pod evidence explains independent reduction policy", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Workloads", exact: true }).click();
+  await page
+    .locator(".pod-panel")
+    .getByText("Pod details", { exact: true })
+    .first()
+    .click();
+  await expect(
+    page
+      .locator(".pod-panel")
+      .getByText(/Selected-window coverage/)
+      .first(),
+  ).toBeVisible();
+  await expect(
+    page
+      .locator(".pod-panel")
+      .getByText(/Pod-lifetime coverage/)
+      .first(),
+  ).toBeVisible();
+  await expect(
+    page
+      .locator(".pod-panel")
+      .getByText(/Represented duration/)
+      .first(),
+  ).toBeVisible();
+  await expect(page.getByText(/Reduction policy: at least 20/)).toBeVisible();
+  await page.getByRole("slider", { name: "Usage lookback days" }).fill("10");
+  await expect(page.getByText("10-day window", { exact: true })).toBeVisible();
+  await page
+    .locator(".analytical-panel")
+    .getByText("Evidence and limits", { exact: true })
+    .first()
+    .click();
+  await expect(
+    page
+      .locator(".analytical-panel")
+      .getByText(/Selected-window coverage/)
+      .first(),
+  ).toBeVisible();
+});

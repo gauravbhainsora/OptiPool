@@ -30,7 +30,11 @@ def recommend(snapshot, usage, headroom=20):
             )
         current, proposed = workload["per_replica"], {}
         recovered = {}
+        reduction_eligible, reduction_reasons = {}, {}
         for key, step in [("cpu", 0.01), ("memory", 16 * 1024**2)]:
+            evidence = metrics.get(key + "_evidence", {})
+            reduction_eligible[key] = evidence.get("eligible", False)
+            reduction_reasons[key] = evidence.get("reasons", ["Sampling evidence unavailable"])
             p99 = metrics.get(key + "_p99")
             value = p99
             if key == "memory" and p99 is not None:
@@ -44,6 +48,13 @@ def recommend(snapshot, usage, headroom=20):
             )
             if key == "memory" and proposed[key] is not None and (oom or any(p["restarts"] for p in members)):
                 proposed[key] = max([current[key], proposed[key]] + [p["requested"][key] for p in members])
+            if (
+                proposed[key] is not None
+                and any(proposed[key] < p["requested"][key] for p in members)
+                and not reduction_eligible[key]
+            ):
+                proposed[key] = None
+                warnings.append(f"{key.upper()} reduction withheld: " + "; ".join(reduction_reasons[key]))
             recovered[key] = (
                 sum(p["requested"][key] for p in members) - proposed[key] * len(members)
                 if proposed[key] is not None
@@ -67,6 +78,10 @@ def recommend(snapshot, usage, headroom=20):
                 "cpu_p99": metrics.get("cpu_p99"),
                 "memory_p99": metrics.get("memory_p99"),
                 "coverage": coverage,
+                "cpu_evidence": metrics.get("cpu_evidence"),
+                "memory_evidence": metrics.get("memory_evidence"),
+                "reduction_eligible": reduction_eligible,
+                "reduction_reasons": reduction_reasons,
                 "pool_replicas": workload["pool_replicas"],
                 "status": "Insufficient data" if None in proposed.values() else "Review required",
                 "warnings": list(dict.fromkeys(warnings)),
