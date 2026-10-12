@@ -110,3 +110,18 @@ def test_cluster_identity_missing_pools_and_location_filter(settings):
         exported = client.get("/api/export/node-pools", params=query)
         assert len(list(csv.DictReader(io.StringIO(exported.content.decode("utf-8-sig"))))) == 2
         assert collector.calls == 8
+
+
+def test_all_pools_retains_source_metadata_and_export_evidence(saved):
+    from optipool.cluster_views import workload_rows
+
+    saved["metrics"].update(
+        cpu_rate_window_seconds=300,
+        query_definition={"memory_metric": "working-set"},
+        resource_status={"cpu": "available", "memory": "unavailable"},
+        fallback_reason="Native failed",
+    )
+    scope = combine("project", "region", "cluster", [view(saved)], [])
+    assert scope["sources"][0]["cpu_rate_window_seconds"] == 300
+    assert scope["sources"][0]["fallback_reason"] == "Native failed"
+    assert "Native failed" in workload_rows(scope)[0]["Metric evidence per pool"]

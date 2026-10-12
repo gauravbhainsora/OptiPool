@@ -950,9 +950,46 @@ function Workloads({
           Highest-replica p99 · CPU and memory maxima calculated independently
         </span>
         <span>
-          {snapshot.usage.memory_definition} · {snapshot.usage.coverage}
+          Source: {snapshot.usage.source} · {snapshot.usage.memory_definition} ·{" "}
+          {snapshot.usage.coverage}
+        </span>
+        <span>
+          Query cadence:{" "}
+          {snapshot.usage.cadence_seconds == null
+            ? "Unknown"
+            : `${snapshot.usage.cadence_seconds}s`}{" "}
+          · CPU rate window:{" "}
+          {snapshot.usage.cpu_rate_window_seconds == null
+            ? "Unknown"
+            : `${snapshot.usage.cpu_rate_window_seconds}s`}
+        </span>
+        <span>
+          CPU observations: {snapshot.usage.resource_status.cpu} · Memory
+          observations: {snapshot.usage.resource_status.memory}
         </span>
       </div>
+      {snapshot.usage.fallback_reason && (
+        <Notice>{snapshot.usage.fallback_reason}</Notice>
+      )}
+      <details className="panel">
+        <summary>Saved query definitions</summary>
+        <p>
+          CPU: {snapshot.usage.query_definition?.cpu_metric ?? "Unknown"} ·{" "}
+          {snapshot.usage.query_definition?.cpu_aggregation ?? "Unknown"} ·
+          Unit: {snapshot.usage.units?.cpu ?? "Unknown"}
+        </p>
+        <p>
+          Memory: {snapshot.usage.query_definition?.memory_metric ?? "Unknown"}{" "}
+          · {snapshot.usage.query_definition?.memory_aggregation ?? "Unknown"} ·
+          Unit: {snapshot.usage.units?.memory ?? "Unknown"}
+        </p>
+        <p>
+          CPU alignment window:{" "}
+          {snapshot.usage.cpu_alignment_window_seconds == null
+            ? "Unknown / not applicable"
+            : `${snapshot.usage.cpu_alignment_window_seconds}s`}
+        </p>
+      </details>
       {snapshot.usage.warnings.map((w) => (
         <Notice key={w}>{w}</Notice>
       ))}

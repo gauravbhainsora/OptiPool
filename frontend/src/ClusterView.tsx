@@ -45,7 +45,24 @@ export default function ClusterView({
         {scope.sources.map((s) => (
           <p key={s.pool_id}>
             <strong>{s.pool_name}</strong> · snapshot {date(s.saved_at)} ·
-            metrics cutoff {date(s.cutoff)} · {s.source} · {s.coverage}
+            metrics cutoff {date(s.cutoff)} · {s.source} · {s.memory_definition}{" "}
+            · {s.coverage}
+            <br />
+            Query cadence:{" "}
+            {s.cadence_seconds == null ? "Unknown" : `${s.cadence_seconds}s`} ·
+            CPU rate window:{" "}
+            {s.cpu_rate_window_seconds == null
+              ? "Unknown"
+              : `${s.cpu_rate_window_seconds}s`}
+            <br />
+            CPU observations: {s.resource_status?.cpu ?? "unknown"} · Memory
+            observations: {s.resource_status?.memory ?? "unknown"}
+            {s.fallback_reason && (
+              <>
+                <br />
+                {s.fallback_reason}
+              </>
+            )}
           </p>
         ))}
       </details>
