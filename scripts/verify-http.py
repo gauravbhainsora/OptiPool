@@ -58,6 +58,45 @@ for table in ["workloads", "pods"]:
 assert {p["id"]: p["snapshot_id"] for p in json.loads(get("/api/inventory"))["pools"]} == {
     p["id"]: p["snapshot_id"] for p in inventory["pools"]
 }
+
+
+def post(path, payload):
+    request = urllib.request.Request(
+        base + path,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.load(response)
+
+
+services = [
+    {"name": "smoke-api", "cpu": "500m", "memory": "1Gi", "replicas": 2},
+    {"name": "smoke-worker", "cpu": "250m", "memory": "512Mi", "replicas": 3},
+]
+bundle = post(
+    "/api/estimate-bundle?" + urllib.parse.urlencode({"pool_id": pool["id"], "snapshot_id": snapshot["id"]}),
+    {"services": services},
+)
+assert bundle["replicas"] == 5 and len(bundle["services"]) == 2
+profiles = json.loads(get("/api/node-pool-profiles?" + urllib.parse.urlencode(cluster_selection)))
+report = post(
+    "/api/node-pool-design",
+    {
+        **cluster_selection,
+        "name": "smoke-new-pool",
+        "services": services,
+        "snapshots": {p["pool_id"]: p["snapshot_id"] for p in profiles["profiles"]},
+    },
+)
+assert report["recommended_profile"] and all(
+    c["configuration"]["total_nodes"] >= 1 for c in report["candidates"]
+)
+assert (
+    json.loads(get("/api/node-pool-designs?" + urllib.parse.urlencode(cluster_selection)))[0]["id"]
+    == report["id"]
+)
 req = urllib.request.Request(
     base + "/api/estimate?" + query,
     data=json.dumps(
@@ -80,5 +119,5 @@ assert result["snapshot_id"] == snapshot["id"] and result["placements"]
 assert result["planning"]["peak_replicas"] == 8 and result["node_budgets"]
 assert json.loads(get("/api/inventory"))["pools"][0]["snapshot_id"] == pool["snapshot_id"]
 print(
-    "HTTP pool/cluster saved views, pinned exports, Pod analytics, recommendations, comparisons and peak/zone scenario verified"
+    "HTTP pool/cluster views, pinned exports, multi-service capacity, new-pool design/history, Pod analytics and peak/zone scenario verified"
 )

@@ -7,6 +7,7 @@ import {
   Database,
   Layers3,
   MemoryStick,
+  PlusCircle,
   LayoutGrid,
   RefreshCw,
   Server,
@@ -29,6 +30,7 @@ import Estimator from "./Estimator";
 import PodTable from "./PodTable";
 import RightSizing from "./RightSizing";
 import SnapshotCompare from "./SnapshotCompare";
+import PoolDesigner from "./PoolDesigner";
 import ClusterView from "./ClusterView";
 import type { ClusterSnapshot, Job, Pool, Snapshot, Workload } from "./types";
 
@@ -52,12 +54,13 @@ type Inventory = {
     }
   >;
 };
-type Tab = "pools" | "nodes" | "workloads" | "estimator";
+type Tab = "pools" | "nodes" | "workloads" | "estimator" | "design";
 const tabs: { id: Tab; label: string; icon: typeof Boxes }[] = [
   { id: "pools", label: "Node pools", icon: Layers3 },
   { id: "nodes", label: "Nodes", icon: Server },
   { id: "workloads", label: "Workloads", icon: Boxes },
   { id: "estimator", label: "Capacity planner", icon: Sparkles },
+  { id: "design", label: "New node pool", icon: PlusCircle },
 ];
 
 export default function App() {
@@ -136,6 +139,11 @@ export default function App() {
       setPoolId(pools[0]?.id ?? "");
   }, [inventory, project, cluster, poolId]);
   const pool = pools.find((p) => p.id === poolId);
+  const designCluster =
+    selectedCluster ??
+    (pool
+      ? { project: pool.project, location: pool.location, name: pool.cluster }
+      : null);
   useEffect(() => {
     if (!poolId) return;
     const controller = new AbortController();
@@ -330,9 +338,11 @@ export default function App() {
             <div>
               <span className="eyebrow">GKE RESOURCE INTELLIGENCE</span>
               <h1>
-                {tab === "estimator"
-                  ? "Capacity planner"
-                  : "Your infrastructure, in focus"}
+                {tab === "design"
+                  ? "New node pool designer"
+                  : tab === "estimator"
+                    ? "Capacity planner"
+                    : "Your infrastructure, in focus"}
               </h1>
               <p>
                 {tab === "estimator"
@@ -691,6 +701,19 @@ export default function App() {
                 </Notice>
               ))}
             </>
+          ) : tab === "design" ? (
+            designCluster ? (
+              <PoolDesigner
+                key={`${designCluster.project}/${designCluster.location}/${designCluster.name}`}
+                project={designCluster.project}
+                location={designCluster.location}
+                cluster={designCluster.name}
+              />
+            ) : (
+              <Notice>
+                Select a cluster with saved node profiles to design a new pool.
+              </Notice>
+            )
           ) : allPoolsSelected ? (
             tab === "estimator" ? (
               <div className="panel empty">

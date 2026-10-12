@@ -72,3 +72,7 @@ Use the [configuration guide](configuration.md) for ADC/impersonation, project d
 ## Combined cluster views
 
 The post-v0.2 changes pass 74 backend cases and four browser flows. Cluster cases cover exact project/location/cluster scope, missing snapshots, independently selected p99 winners, mixed memory definitions, pinned exports after a later refresh, foreign snapshot rejection and no collection on read/export. Browser coverage checks the CPU/memory overview, plain pool names, combined node/controller/Pod counts, lookback, Excel, individual planning requirements, non-Deployment captions and mobile overflow. The Docker HTTP smoke also reads cluster views and validates pinned CSV/Excel exports without changing any pool's saved ID.
+
+## Planner extensions
+
+Current source passes 81 backend cases and six browser flows. Extension cases cover joint consumption, aggregate quotas/peak bounds, duplicate names, affinity between proposed services, empty-pool designs, profile/price ranking, source immutability, foreign pins, no collection and preservation of every supporting snapshot through retention and backup/restore. Browser flows cover service rows/placements, stale-response cancellation on pool change, new-pool candidates, JSON, reloaded history and mobile overflow. Docker HTTP smoke includes bundles and new-pool design/history. The benchmark adds 20-user bundle and two-profile design workloads.

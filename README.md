@@ -33,7 +33,7 @@ For development with frontend hot reloading, keep the API running and use `npm -
 | Node pools | Project/cluster/pool selection, environment, machine configuration, autoscaler bounds, CPU/memory request totals, policy violations, snapshot time and saved-snapshot comparisons |
 | Nodes | Readiness, cordons, allocatable CPU/memory, requests, configured limits, remaining request budgets, Pod slots, labels and taints |
 | Workloads | Controller ownership, Services, replica counts, highest-replica p99 and advisory request proposals with headroom/coverage; per-Pod latest saved usage/p99, container requests/limits, conditions and available OOM evidence |
-| Capacity planner | Requests/replicas or Deployment YAML; steady/HPA/rollout envelopes, zone spread, before/after node budgets, placement explanations, growth limits and saved cost scenarios |
+| Capacity planner | Up to 20 services assessed together, each with requests/replicas or Deployment YAML; steady/HPA/rollout envelopes, zone spread, before/after node budgets, placement explanations, growth limits and saved cost scenarios |
 
 Node-pool, workload and Pod tables export **CSV and Excel**, with snapshot provenance. Workload and Pod usage exports follow the selected window and displayed snapshot. No export initiates a cloud fetch.
 
@@ -42,6 +42,8 @@ Choose a cluster and **All node pools** to combine its saved Nodes, Workloads an
 Choose **Selected node pool** before estimating. The result names the target pool, cluster and project. The planner places proposed Pods only on that pool or new nodes using its saved configuration; it does not choose another pool automatically.
 
 The 1–10 day slider ends at the saved metrics cutoff. Deployment CPU and memory p99 are independently the highest temporal replica p99, with missing data and historical attribution gaps exposed. Costs use hourly and 730-hour monthly periods regardless of the slider.
+
+The **New node pool** tab designs an empty proposed pool for a service bundle using up to 10 observed configurations saved in the selected cluster. It compares required nodes and saved prices, shows assumptions and placement, and offers JSON download and saved history. The comparison covers saved profiles rather than the full GCP machine catalog. Provision the reviewed configuration outside OptiPool.
 
 ## Saved-data contract
 

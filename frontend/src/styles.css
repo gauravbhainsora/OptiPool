@@ -903,7 +903,7 @@ td small {
 }
 .estimator-grid {
   display: grid;
-  grid-template-columns: minmax(260px, 360px) 1fr;
+  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
   gap: 23px;
   align-items: start;
 }
@@ -956,7 +956,7 @@ td small {
 }
 .form-pair {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 14px;
 }
 .form-hint {
@@ -1520,4 +1520,38 @@ td small {
     flex-wrap: wrap;
     gap: 12px;
   }
+}
+
+.service-input {
+  border: 1px solid #dfe8e2;
+  border-radius: 12px;
+  padding: 16px;
+  margin: 16px 0;
+  min-width: 0;
+}
+.service-input legend {
+  font-weight: 700;
+  padding: 0 8px;
+}
+.remove-service {
+  margin-bottom: 12px;
+}
+.profile-choice {
+  border-top: 1px solid #dfe8e2;
+  padding: 12px 0;
+}
+.service-editor {
+  min-width: 0;
+}
+
+.estimator-grid > * {
+  min-width: 0;
+}
+.scenario .checkbox-label {
+  flex-direction: row;
+  align-items: center;
+}
+.form-pair label,
+.scenario input {
+  min-width: 0;
 }

@@ -62,7 +62,7 @@ Keep seams for configuration, authentication, storage/jobs, collection, Kubernet
 
 ## 4. Dashboard navigation and selection
 
-Build four responsive tabs: **Node pools**, **Nodes**, **Workloads**, **Capacity planner**. Use project, cluster and selected node-pool controls.
+Build five responsive tabs: **Node pools**, **Nodes**, **Workloads**, **Capacity planner**, **New node pool**. Use project, cluster and selected node-pool controls.
 
 - Identify a cluster by project + location + cluster name, and a pool by full immutable identity. Same names across projects or regions must not mix.
 - The selected node-pool input displays **only the node-pool name**. Keep full identity internally and expose context elsewhere.
@@ -129,7 +129,7 @@ For an individual pool, derive Deployment effective Pod request proposals from t
 
 ## 10. Capacity planner
 
-The user selects an **individual target pool**, then supplies a new workload name, CPU/memory requests and replica count, or an `apps/v1` Deployment YAML. Validate nested manifest shape, null/invalid resource fields, quantities and bounds with useful field-specific errors. Store normalized inputs and target context.
+The user selects an **individual target pool**, then supplies one or up to 20 services, each with a workload name, namespace, CPU/memory requests and replica count, or one `apps/v1` Deployment YAML. Assess the whole bundle jointly; aggregate same-namespace quotas and total peak bounds, share node budgets/Pod slots/context and identify each service in placements. Reject duplicate namespace/name pairs. Pin the displayed snapshot and cancel obsolete browser results on target change. Validate nested manifest shape, null/invalid resource fields, quantities and bounds with useful field-specific errors. Store normalized inputs and target context.
 
 Keep existing Pods fixed. For each saved node, remaining budget = allocatable × environment ceiling − existing effective requests. Evaluate CPU, memory and Pod slots independently, including Kubernetes effective request semantics for init containers, restartable sidecars, overhead and limit-only defaulting.
 
@@ -161,7 +161,7 @@ Export node-pool, workload and Pod tables as CSV/XLSX. Include appropriate proje
 
 ## 13. Storage and fast loading
 
-Use SQLite WAL, foreign keys, busy timeout, short transactions, an in-process lock and an exclusive process ownership lock. Persist inventory, immutable compressed snapshots, compact overview and planning projections, durable jobs, estimate history, audit and schema metadata. Publish full snapshots and derived projections in one transaction.
+Use SQLite WAL, foreign keys, busy timeout, short transactions, an in-process lock and an exclusive process ownership lock. Persist inventory, immutable compressed snapshots, compact overview and planning projections, durable jobs, estimate history, per-estimate kind and all supporting snapshot references, audit and schema metadata. Retention must preserve every profile snapshot referenced by a retained new-pool design, and backup/restore must retain those links. Publish full snapshots and derived projections in one transaction.
 
 - One indexed inventory query reads compact overviews; decode outside the connection lock. Avoid decoding metrics histories to render pool summaries or run capacity placement.
 - Use a byte-bounded immutable serialized saved-view cache (64 MiB default), keyed by snapshot ID, day window and minimum sample threshold. Deduplicate concurrent cold reads, bypass oversized entries and evaluate authentication before cache responses.
@@ -234,12 +234,12 @@ Conclude with implemented behavior, tests actually run, benchmark evidence, comm
 
 ## 19. Continuation checkpoint
 
-As of 12 October 2026, public release 0.2.0 contains recommendations, richer Pod detail, HPA/rollout/zone scenarios, snapshot comparisons and loading/collector optimizations. Memory overview, pool-only labels, All node pools with combined saved tables/exports, clearer controller captions and Matt Pocock repository configuration are verified locally after that release. The latest checks comprise 74 backend cases, four browser flows, build/style/Helm checks and Docker/Kind lifecycle verification. Synthetic 20-user timings are approximately 0.515s saved-view p95, 0.197s two-pool cluster p95 and 0.037s estimate p95, with zero collection; Docker testing was running concurrently.
+As of 12 October 2026, public release 0.2.0 contains recommendations, richer Pod detail, HPA/rollout/zone scenarios, snapshot comparisons and loading/collector optimizations. Memory overview, pool-only labels, All node pools with combined saved tables/exports, clearer controller captions and Matt Pocock repository configuration are verified locally after that release. The latest checks comprise 81 backend cases, six browser flows, build/style/Helm checks and Docker/Kind lifecycle verification. Synthetic 20-user timings are approximately 0.213s saved-view p95, 0.243s two-pool cluster p95, 0.070s estimate p95, 0.056s service-bundle p95 and 0.147s two-profile design p95, with zero collection; Docker testing was running concurrently.
 
 Actual project IDs, collector identity and nonproduction access have not been provided. Validate real inventory/ownership/monitoring, reviewed public price mappings, IAP/Workload Identity/networking, off-volume backup restore and actual-scale load before production enablement. Wider controller p99, complete deleted-replica history, per-container usage, CPU throttling, DNS-only control-plane support and globally optimal scheduling are not claimed implemented. The post-release features and this prompt are published on main (feature commit 6f1db48, prompt commit e30abd0, checkpoint 4deec62). The public 0.2.0 artifacts remain immutable.
 
-## 20. Newly approved feature extension
+## 20. Multi-service and new-pool design extension
 
 Implement a multi-service capacity planner: users add multiple service configurations (namespace, requests, replicas and optional Deployment YAML/peak scenario) and assess them together against one selected saved node pool. All services share node budgets, Pod slots, outstanding demand and scheduling context; same-namespace quotas are checked against combined demand. Return combined nodes/cost plus per-service inputs and identifiable placements. Preserve the existing single-service flow and configured aggregate simulation bounds.
 
-Add a new-node-pool design tab. The user explicitly chose **design and estimate only**, with no GKE creation. Users enter the proposed pool name/environment and multiple workload configurations, and select saved observed node profiles in a cluster as candidate configurations. Compare required node counts, feasible placements, request buffers and saved on-demand/resource-CUD costs. Preserve per-profile snapshot/allocatable/overhead/label/taint/zone provenance. Begin with an empty proposed pool; existing cluster Pods remain context rather than reusable capacity. Clearly state the use of observed profiles, differing capture times, unavailable prices and unsupported context. Reject invalid names and foreign profile/snapshot pins, retain read-only collection behavior, and verify resource/constraint/quota/boundary and browser cases. These extensions are approved but not yet implemented at this checkpoint.
+Add a new-node-pool design tab. The user explicitly chose **design and estimate only**, with no GKE creation. Users enter the proposed pool name/environment and multiple workload configurations, and select saved observed node profiles in a cluster as candidate configurations. Compare required node counts, feasible placements, request buffers and saved on-demand/resource-CUD costs. Preserve per-profile snapshot/allocatable/overhead/label/taint/zone provenance. Begin with an empty proposed pool; existing cluster Pods remain context rather than reusable capacity. Clearly state the use of observed profiles, differing capture times, unavailable prices and unsupported context. Reject invalid names and foreign profile/snapshot pins, retain read-only collection behavior, and verify resource/constraint/quota/boundary and browser cases. These extensions are implemented and verified locally with 81 backend cases, six browser flows, Docker/Kind and synthetic benchmarks. Reports persist with cluster-scoped history and JSON download; all supporting snapshot references are retained. They remain unreleased. Source publication is recorded in the maintained build plan.

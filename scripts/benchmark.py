@@ -80,10 +80,47 @@ def main():
                 assert response.status_code == 200
                 return time.perf_counter() - started
 
+            def bundle_read(i):
+                started = time.perf_counter()
+                response = client.post(
+                    "/api/estimate-bundle",
+                    params={"pool_id": pool_id},
+                    json={
+                        "services": [
+                            {"name": f"bench-{i}-{name}", "cpu": "500m", "memory": "1Gi", "replicas": 3}
+                            for name in ["api", "worker"]
+                        ]
+                    },
+                )
+                assert response.status_code == 200 and response.json()["replicas"] == 6
+                return time.perf_counter() - started
+
+            def design_read(i):
+                started = time.perf_counter()
+                selected = [
+                    p
+                    for p in pools
+                    if (p["project"], p["location"], p["cluster"])
+                    == (pools[0]["project"], pools[0]["location"], pools[0]["cluster"])
+                ]
+                response = client.post(
+                    "/api/node-pool-design",
+                    json={
+                        **{k: pools[0][k] for k in ["project", "location", "cluster"]},
+                        "name": f"bench-pool-{i}",
+                        "snapshots": {p["id"]: p["snapshot_id"] for p in selected},
+                        "services": [{"name": "api", "cpu": "500m", "memory": "1Gi", "replicas": 6}],
+                    },
+                )
+                assert response.status_code == 200 and len(response.json()["candidates"]) == 2
+                return time.perf_counter() - started
+
             with ThreadPoolExecutor(max_workers=20) as workers:
                 reads = list(workers.map(cached, range(100)))
                 cluster_reads = list(workers.map(cluster_read, range(100)))
                 estimates = list(workers.map(scenario, range(40)))
+                bundles = list(workers.map(bundle_read, range(40)))
+                designs = list(workers.map(design_read, range(40)))
             assert source.calls == 16
             report = {
                 "recorded_at": datetime.now(UTC).isoformat(),
@@ -97,6 +134,11 @@ def main():
                 "cluster_requests": len(cluster_reads),
                 "pools_per_cluster": 2,
                 "cluster_p95_seconds": percentile(cluster_reads, 0.95),
+                "bundle_requests": len(bundles),
+                "bundle_p95_seconds": percentile(bundles, 0.95),
+                "design_requests": len(designs),
+                "design_profiles": 2,
+                "design_p95_seconds": percentile(designs, 0.95),
                 "estimate_requests": len(estimates),
                 "cached_p95_seconds": percentile(reads, 0.95),
                 "estimate_p95_seconds": percentile(estimates, 0.95),
@@ -110,6 +152,8 @@ def main():
                 report["cached_p95_seconds"] < 2
                 and report["cluster_p95_seconds"] < 2
                 and report["estimate_p95_seconds"] < 10
+                and report["bundle_p95_seconds"] < 10
+                and report["design_p95_seconds"] < 10
             )
 
 

@@ -43,3 +43,7 @@ Automated tests restore a backup into a fresh file and verify exact snapshot ide
 Do not expose local-auth mode beyond trusted development. IAP verification also protects requests reaching the backend directly. Use HTTPS and approved organization/group grants. All admitted users share view, export, refresh and estimate rights.
 
 Monitor collector errors/durations, queue latency, API latency, DB/disk size and free space, metrics coverage, snapshot age and backup/restore health. This version compresses metrics with each complete snapshot; repeated ten-day histories can grow storage materially. Measure this at actual inventory scale and configure collection scope/retention sizing before production. An incremental time-series store/deduplicated history is a future scaling option, not an implemented feature.
+
+## Planner extension data compatibility
+
+The unreleased service-bundle/new-pool features add estimate_details and estimate_sources tables, without replacing existing observations. Current retention protects every source snapshot referenced by a retained design; backups include these tables. Older application releases do not understand node-pool design record kinds or multiple source pins. Keep a consistent pre-upgrade backup and validate restore when planning a rollback; changing the Helm image alone does not reverse database data changes.

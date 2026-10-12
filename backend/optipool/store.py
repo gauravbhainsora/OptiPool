@@ -86,6 +86,13 @@ class Store:
             CREATE TABLE IF NOT EXISTS estimates (
                 id TEXT PRIMARY KEY, snapshot_id TEXT NOT NULL REFERENCES snapshots(id),
                 created REAL NOT NULL, actor TEXT NOT NULL, input BLOB NOT NULL, result BLOB NOT NULL);
+            CREATE TABLE IF NOT EXISTS estimate_details (
+                estimate_id TEXT PRIMARY KEY REFERENCES estimates(id) ON DELETE CASCADE, kind TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS estimate_sources (
+                estimate_id TEXT REFERENCES estimates(id) ON DELETE CASCADE,
+                snapshot_id TEXT REFERENCES snapshots(id) ON DELETE CASCADE,
+                PRIMARY KEY (estimate_id, snapshot_id));
+            CREATE INDEX IF NOT EXISTS estimate_sources_snapshot ON estimate_sources(snapshot_id);
             CREATE TABLE IF NOT EXISTS audit (
                 id INTEGER PRIMARY KEY, created REAL NOT NULL, actor TEXT NOT NULL,
                 action TEXT NOT NULL, scope TEXT NOT NULL);
@@ -260,13 +267,20 @@ class Store:
                 "UPDATE jobs SET state=?,updated=?,error=? WHERE id=?", (state, time.time(), error, ident)
             )
 
-    def save_estimate(self, snapshot_id, inputs, result, actor):
+    def save_estimate(self, snapshot_id, inputs, result, actor, sources=None):
         ident = str(uuid.uuid4())
         packed_input, packed_result = pack(inputs), pack(result)
         with self.lock, self.db:
             self.db.execute(
                 "INSERT INTO estimates VALUES (?,?,?,?,?,?)",
                 (ident, snapshot_id, time.time(), actor, packed_input, packed_result),
+            )
+            self.db.execute(
+                "INSERT INTO estimate_details VALUES (?,?)", (ident, result.get("kind", "capacity"))
+            )
+            self.db.executemany(
+                "INSERT INTO estimate_sources VALUES (?,?)",
+                [(ident, sid) for sid in sorted(set(sources or []) | {snapshot_id})],
             )
             self.db.execute(
                 "INSERT INTO audit(created,actor,action,scope) VALUES (?,?,?,?)",
@@ -278,9 +292,29 @@ class Store:
         with self.lock:
             rows = self.db.execute(
                 "SELECT e.* FROM estimates e JOIN snapshots s ON s.id=e.snapshot_id "
-                "WHERE s.pool_id=? ORDER BY e.created DESC LIMIT 20",
+                "LEFT JOIN estimate_details d ON d.estimate_id=e.id "
+                "WHERE s.pool_id=? AND COALESCE(d.kind,'capacity')!='node_pool_design' "
+                "ORDER BY e.created DESC LIMIT 20",
                 (pool_id,),
             ).fetchall()
+        return self.estimate_records(rows)
+
+    def designs(self, pool_ids):
+        if not pool_ids:
+            return []
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT e.* FROM estimates e JOIN snapshots s ON s.id=e.snapshot_id "
+                "JOIN estimate_details d ON d.estimate_id=e.id "
+                "WHERE d.kind='node_pool_design' AND s.pool_id IN ("
+                + ",".join("?" for _ in pool_ids)
+                + ") ORDER BY e.created DESC LIMIT 20",
+                pool_ids,
+            ).fetchall()
+        return self.estimate_records(rows)
+
+    @staticmethod
+    def estimate_records(rows):
         return [
             {
                 "id": r["id"],
@@ -299,6 +333,7 @@ class Store:
             self.db.execute(
                 "DELETE FROM snapshots WHERE created<? AND id NOT IN "
                 "(SELECT snapshot_id FROM estimates) AND id NOT IN "
+                "(SELECT snapshot_id FROM estimate_sources) AND id NOT IN "
                 "(SELECT id FROM snapshots s WHERE created=(SELECT MAX(created) FROM snapshots "
                 "WHERE pool_id=s.pool_id))",
                 (cutoff,),

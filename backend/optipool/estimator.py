@@ -88,6 +88,46 @@ class Scenario(BaseModel):
         return pod, labels, replicas
 
 
+class ServiceBundle(BaseModel):
+    services: list[Scenario] = Field(min_length=1, max_length=20)
+
+
+def proposals_for(scenario, max_replicas):
+    services = scenario.services if isinstance(scenario, ServiceBundle) else [scenario]
+    proposals, identities = [], set()
+    for service in services:
+        key = f"{service.namespace}/{service.name}"
+        if key in identities:
+            raise ValueError("Service names must be unique within a namespace")
+        identities.add(key)
+        spec, labels, replicas = service.pod()
+        planning = service.planning(replicas)
+        if service.spread_zones:
+            spec.setdefault("topologySpreadConstraints", []).append(
+                {
+                    "maxSkew": 1,
+                    "topologyKey": "topology.kubernetes.io/zone",
+                    "whenUnsatisfiable": "DoNotSchedule",
+                    "labelSelector": {"matchLabels": labels},
+                }
+            )
+        proposals.append(
+            {
+                "key": key,
+                "name": service.name,
+                "namespace": service.namespace,
+                "spec": spec,
+                "labels": labels,
+                "planning": planning,
+                "replicas": planning["peak_replicas"],
+                "per_replica": pod_resources(spec),
+            }
+        )
+    if sum(p["replicas"] for p in proposals) > max_replicas:
+        raise ValueError("Peak replicas across services exceed the configured simulation bound")
+    return proposals
+
+
 def unsupported(spec):
     reasons = []
     if spec.get("schedulerName", "default-scheduler") != "default-scheduler":
@@ -182,27 +222,37 @@ def affinity_ok(node, spec, labels, namespace, pods, nodes):
     return True
 
 
-def estimate(snapshot, scenario: Scenario, max_added=100, max_replicas=2000):
-    spec, labels, replicas = scenario.pod()
-    planning = scenario.planning(replicas)
-    replicas = planning["peak_replicas"]
-    if replicas > max_replicas:
-        raise ValueError("Peak replicas exceed the configured simulation bound")
-    if scenario.spread_zones:
-        spec.setdefault("topologySpreadConstraints", []).append(
-            {
-                "maxSkew": 1,
-                "topologyKey": "topology.kubernetes.io/zone",
-                "whenUnsatisfiable": "DoNotSchedule",
-                "labelSelector": {"matchLabels": labels},
-            }
-        )
-    request = pod_resources(spec)
+def estimate(snapshot, scenario: Scenario | ServiceBundle, max_added=100, max_replicas=2000):
+    proposals = proposals_for(scenario, max_replicas)
+    first = proposals[0]
+    spec, labels, namespace, request = (
+        first["spec"],
+        first["labels"],
+        first["namespace"],
+        first["per_replica"],
+    )
+    replicas = sum(p["replicas"] for p in proposals)
+    planning = (
+        first["planning"]
+        if len(proposals) == 1
+        else {
+            "mode": "multi-service",
+            **{
+                k: sum(p["planning"][k] for p in proposals)
+                for k in ["steady_replicas", "hpa_replicas", "surge_replicas", "peak_replicas"]
+            },
+        }
+    )
     nodes = deepcopy(snapshot["nodes"])
     # Existing Pod records are read-only; only the placement list receives new entries.
     pods = list(snapshot.get("context", {}).get("pods", []))
     factor = 0.8 if snapshot["pool"]["environment"] == "production" else 0.9
-    warnings = list(dict.fromkeys(unsupported(spec) + snapshot.get("context", {}).get("uncertainties", [])))
+    warnings = list(
+        dict.fromkeys(
+            [w for p in proposals for w in unsupported(p["spec"])]
+            + snapshot.get("context", {}).get("uncertainties", [])
+        )
+    )
     violations = [
         n["name"]
         for n in nodes
@@ -213,7 +263,15 @@ def estimate(snapshot, scenario: Scenario, max_added=100, max_replicas=2000):
         "snapshot_id": snapshot["id"],
         "snapshot_at": snapshot["saved_at"],
         "policy_factor": factor,
-        "per_replica": request,
+        "per_replica": request if len(proposals) == 1 else None,
+        "kind": "capacity_bundle" if isinstance(scenario, ServiceBundle) else "capacity",
+        "services": [
+            {k: p[k] for k in ["key", "name", "namespace", "replicas", "per_replica", "planning"]}
+            for p in proposals
+        ],
+        "total_requests": {
+            k: sum(p["per_replica"][k] * p["replicas"] for p in proposals) for k in ["cpu", "memory"]
+        },
         "replicas": replicas,
         "planning": planning,
         "confidence": {
@@ -233,53 +291,62 @@ def estimate(snapshot, scenario: Scenario, max_added=100, max_replicas=2000):
         "search_bound": max_added,
         "placements": [],
     }
-    namespace = scenario.namespace
     context = snapshot.get("context", {})
     known_namespaces = set(context.get("namespaces", [])) | {p["namespace"] for p in context.get("pods", [])}
-    if context.get("namespace_context_complete") and namespace not in known_namespaces:
+    namespaces = {p["namespace"] for p in proposals}
+    missing = namespaces - known_namespaces
+    if context.get("namespace_context_complete") and missing:
         return {
             **baseline,
             "outcome": "Blocked constraints",
-            "reason": "Target namespace is absent from the saved cluster context",
+            "reason": "Target namespace is absent from the saved cluster context: "
+            + ", ".join(sorted(missing)),
             "additional_nodes": 0,
             "cost": {"available": False, "reason": "Namespace must exist before deployment"},
         }
-    if not context.get("namespace_context_complete") and namespace not in known_namespaces:
-        warnings.append("Target namespace existence could not be verified")
-    quotas = snapshot.get("context", {}).get("quotas", [])
-    for quota in quotas:
-        if quota["metadata"]["namespace"] != namespace:
+    if missing:
+        warnings.append("Target namespace existence could not be verified: " + ", ".join(sorted(missing)))
+    for quota in context.get("quotas", []):
+        ns = quota["metadata"]["namespace"]
+        if ns not in namespaces:
             continue
         hard, used = quota.get("status", {}).get("hard", {}), quota.get("status", {}).get("used", {})
         if quota.get("spec", {}).get("scopes") or quota.get("spec", {}).get("scopeSelector"):
             warnings.append("Scoped ResourceQuota needs external validation")
             continue
+        local = [p for p in proposals if p["namespace"] == ns]
+        count = sum(p["replicas"] for p in local)
         for key, delta in {
-            "requests.cpu": request["cpu"] * replicas,
-            "requests.memory": request["memory"] * replicas,
-            "pods": replicas,
+            "requests.cpu": sum(p["per_replica"]["cpu"] * p["replicas"] for p in local),
+            "requests.memory": sum(p["per_replica"]["memory"] * p["replicas"] for p in local),
+            "pods": count,
+            "count/pods": count,
         }.items():
             if key in hard and quantity(used.get(key, 0)) + delta > quantity(hard[key]):
                 return {
                     **baseline,
                     "outcome": "Blocked constraints",
-                    "reason": f"Namespace quota {key} exceeded",
+                    "reason": f"Namespace {ns} quota {key} exceeded by combined service demand",
                     "additional_nodes": 0,
                     "cost": cost(snapshot.get("pricing"), 0),
                 }
         if any(k not in {"requests.cpu", "requests.memory", "pods", "count/pods"} for k in hard):
             warnings.append("Additional quota dimensions need external validation")
-    if any(
-        limit_range["metadata"]["namespace"] == namespace
-        for limit_range in snapshot.get("context", {}).get("limit_ranges", [])
-    ):
+    if any(lr["metadata"]["namespace"] in namespaces for lr in context.get("limit_ranges", [])):
         warnings.append("Namespace LimitRange defaults and bounds need external validation")
-    pending = snapshot.get("context", {}).get("pending", [])
-    demand = [(p["spec"], p.get("labels", {}), p["namespace"], "existing:" + p["name"]) for p in pending]
-    demand += [(spec, labels, namespace, f"{scenario.name}-{i + 1}") for i in range(replicas)]
+    pending = context.get("pending", [])
+    demand = [
+        (p["spec"], p.get("labels", {}), p["namespace"], "existing:" + p["name"], None) for p in pending
+    ]
+    for p in proposals:
+        prefix = p["key"] if len(proposals) > 1 else p["name"]
+        demand.extend(
+            (p["spec"], p["labels"], p["namespace"], f"{prefix}-{i + 1}", p["key"])
+            for i in range(p["replicas"])
+        )
     added, placements = [], []
     templates = snapshot.get("node_templates", [])
-    request_cache = {id(spec): request}
+    request_cache = {id(p["spec"]): p["per_replica"] for p in proposals}
 
     def effective(pod_spec):
         key = id(pod_spec)
@@ -323,7 +390,7 @@ def estimate(snapshot, scenario: Scenario, max_added=100, max_replicas=2000):
         )
 
     reason = None
-    for pod_spec, pod_labels, ns, name in demand:
+    for pod_spec, pod_labels, ns, name, service_key in demand:
         warnings.extend(unsupported(pod_spec))
         eligible = [n for n in nodes if can_place(n, pod_spec, pod_labels, ns)]
         if not eligible and len(added) < max_added:
@@ -370,7 +437,8 @@ def estimate(snapshot, scenario: Scenario, max_added=100, max_replicas=2000):
                 "replica": name,
                 "node": chosen["name"],
                 "zone": chosen["zone"],
-                "existing_demand": name.startswith("existing:"),
+                "existing_demand": service_key is None,
+                "service": service_key,
             }
         )
     permitted = (
@@ -407,6 +475,9 @@ def estimate(snapshot, scenario: Scenario, max_added=100, max_replicas=2000):
             "remaining": {k: n["allocatable"][k] * factor - n["requested"][k] for k in ["cpu", "memory"]},
             "placements": by_node[n["name"]],
             "rejections": rejection_reasons(n, spec, labels, namespace),
+            "service_rejections": {
+                p["key"]: rejection_reasons(n, p["spec"], p["labels"], p["namespace"]) for p in proposals
+            },
         }
         for n in nodes
     ]
@@ -426,6 +497,10 @@ def estimate(snapshot, scenario: Scenario, max_added=100, max_replicas=2000):
         "exceeds_autoscaler_max": not reason and len(added) > permitted,
         "pending_replicas_accounted": len(pending),
         "placements": placements,
+        "services": [
+            {**p, "placed_replicas": sum(x["service"] == p["key"] for x in placements)}
+            for p in baseline["services"]
+        ],
         "node_budgets": node_budgets,
         "zone_distribution": {zone: by_zone[zone] for zone in sorted({n["zone"] for n in nodes})},
         "confidence": {**baseline["confidence"], "status": "Conditional" if uncertain else "Snapshot-based"},

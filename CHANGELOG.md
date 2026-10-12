@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Joint capacity assessments for up to 20 services, with shared node budgets, aggregate namespace quotas/peak bounds, pinned snapshots and per-service placement explanations.
+- New-pool design tab comparing up to 10 saved node profiles, with preserved request buffers, saved on-demand/CUD costs, proposed configuration, JSON download and persisted history.
+- Additive estimate classification and source-reference tables preserve every snapshot used by retained designs.
+- Mobile form/grid sizing and cancellation of obsolete assessments when the target pool changes.
+
 - Memory requests overview beside CPU, with allocatable totals and unavailable-data handling.
 - Pool-only names in the selected-pool input and unambiguous project/location/cluster selection.
 - All node pools selection combining saved Nodes, Workloads and Pods, with per-pool provenance and snapshot-pinned CSV/Excel exports; individual-pool refresh and planning remain required.

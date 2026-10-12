@@ -275,3 +275,198 @@ test("cluster-wide saved views, memory summary, exports and individual planning 
   ).toBe(false);
   expect(errors).toEqual([]);
 });
+
+test("multiple services share capacity and keep per-service placements", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(
+    page.getByRole("tab", { name: "Node pools 8", exact: true }),
+  ).toBeVisible();
+  const before = await (await page.request.get("/api/inventory")).json();
+  await page.getByRole("tab", { name: /Capacity planner/ }).click();
+  const first = page.getByRole("group", { name: "Service 1", exact: true });
+  await first.getByLabel("Service name", { exact: true }).fill("bundle-api");
+  await first.getByLabel("CPU request / replica", { exact: true }).fill("100m");
+  await first
+    .getByLabel("Memory request / replica", { exact: true })
+    .fill("128Mi");
+  await first.getByLabel("Replica count", { exact: true }).fill("2");
+  await page.getByRole("button", { name: "Add service", exact: true }).click();
+  const second = page.getByRole("group", { name: "Service 2", exact: true });
+  await second
+    .getByLabel("Service name", { exact: true })
+    .fill("bundle-worker");
+  await second
+    .getByLabel("CPU request / replica", { exact: true })
+    .fill("200m");
+  await second
+    .getByLabel("Memory request / replica", { exact: true })
+    .fill("256Mi");
+  await second.getByLabel("Replica count", { exact: true }).fill("3");
+  const responsePromise = page.waitForResponse(
+    (r) =>
+      r.url().includes("/api/estimate-bundle") &&
+      r.request().method() === "POST",
+  );
+  await page
+    .getByRole("button", { name: "Estimate capacity", exact: true })
+    .click();
+  const assessment = await (await responsePromise).json();
+  expect(assessment.replicas).toBe(5);
+  expect(assessment.total_requests.cpu).toBeCloseTo(0.8);
+  expect(
+    assessment.services.map(
+      (s: { placed_replicas: number }) => s.placed_replicas,
+    ),
+  ).toEqual([2, 3]);
+  expect(
+    new Set(assessment.placements.map((p: { service: string }) => p.service))
+      .size,
+  ).toBe(2);
+  await expect(
+    page.getByRole("table", { name: "Assessed services" }).getByRole("row"),
+  ).toHaveCount(3);
+  await expect(
+    page.getByRole("heading", { name: "Fits", exact: true }),
+  ).toBeVisible();
+  let release!: () => void;
+  let started!: () => void;
+  let completed!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const start = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const completion = new Promise<void>((resolve) => {
+    completed = resolve;
+  });
+  await page.route("**/api/estimate-bundle?*", async (route) => {
+    const response = await route.fetch();
+    started();
+    await held;
+    // The browser may already have canceled this intentionally stale request.
+    await route.fulfill({ response }).catch(() => {});
+    completed();
+  });
+  await page
+    .getByRole("button", { name: "Estimate capacity", exact: true })
+    .click();
+  await start;
+  const worker = before.pools.find(
+    (p: { name: string; project: string; cluster: string }) =>
+      p.name === "workers" &&
+      p.project === assessment.target_pool.project &&
+      p.cluster === assessment.target_pool.cluster,
+  );
+  await page
+    .getByLabel("Selected node pool", { exact: true })
+    .selectOption(worker.id);
+  await expect(
+    page.getByRole("button", { name: "Estimate capacity", exact: true }),
+  ).toBeEnabled();
+  release();
+  await completion;
+  await expect(
+    page.getByRole("table", { name: "Assessed services" }),
+  ).toHaveCount(0);
+  const after = await (await page.request.get("/api/inventory")).json();
+  expect(
+    after.pools.map((p: { snapshot_id: string }) => p.snapshot_id),
+  ).toEqual(before.pools.map((p: { snapshot_id: string }) => p.snapshot_id));
+});
+
+test("new node pool design compares saved profiles, downloads and restores history", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/");
+  await expect(
+    page.getByRole("tab", { name: "Node pools 8", exact: true }),
+  ).toBeVisible();
+  const before = await (await page.request.get("/api/inventory")).json();
+  await page.getByRole("tab", { name: "New node pool", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Design a new node pool", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("Use profile services", { exact: true }),
+  ).toBeChecked();
+  await page
+    .getByLabel("New node pool name", { exact: true })
+    .fill("bundle-pool");
+  const first = page.getByRole("group", { name: "Service 1", exact: true });
+  await first.getByLabel("Service name", { exact: true }).fill("new-api");
+  await first.getByLabel("CPU request / replica", { exact: true }).fill("1");
+  await first.getByLabel("Replica count", { exact: true }).fill("4");
+  await page.getByRole("button", { name: "Add service", exact: true }).click();
+  const second = page.getByRole("group", { name: "Service 2", exact: true });
+  await second.getByLabel("Service name", { exact: true }).fill("new-worker");
+  const responsePromise = page.waitForResponse(
+    (r) =>
+      r.url().endsWith("/api/node-pool-design") &&
+      r.request().method() === "POST",
+  );
+  await page
+    .getByRole("button", { name: "Design node pool", exact: true })
+    .click();
+  const report = await (await responsePromise).json();
+  expect(report.kind).toBe("node_pool_design");
+  expect(report.candidates.length).toBe(2);
+  expect(
+    report.candidates.every(
+      (c: { configuration: { total_nodes: number } }) =>
+        c.configuration.total_nodes === 2,
+    ),
+  ).toBe(true);
+  expect(
+    report.candidates.every(
+      (c: { assessment: { node_budgets: { planned: boolean }[] } }) =>
+        c.assessment.node_budgets.every((n) => n.planned),
+    ),
+  ).toBe(true);
+  await expect(
+    page.getByRole("table", { name: "Node pool candidates" }).getByRole("row"),
+  ).toHaveCount(3);
+  await expect(
+    page.getByRole("heading", { name: "Saved node pool designs", exact: true }),
+  ).toBeVisible();
+  const downloadPromise = page.waitForEvent("download");
+  await page
+    .getByRole("button", { name: "Download design JSON", exact: true })
+    .click();
+  expect((await downloadPromise).suggestedFilename()).toBe(
+    "optipool-node-pool-design.json",
+  );
+  await page.screenshot({
+    path: "../docs/nodepool-designer.png",
+    fullPage: true,
+  });
+  await page.reload();
+  await page.getByRole("tab", { name: "New node pool", exact: true }).click();
+  await page.getByRole("button", { name: /^bundle-pool ·/ }).click();
+  await expect(
+    page.getByRole("table", { name: "Node pool candidates" }),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("New node pool name", { exact: true }),
+  ).toHaveValue("bundle-pool");
+  await expect(
+    page
+      .getByRole("group", { name: "Service 1", exact: true })
+      .getByLabel("Service name", { exact: true }),
+  ).toHaveValue("new-api");
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth + 1,
+    ),
+  ).toBe(false);
+  const after = await (await page.request.get("/api/inventory")).json();
+  expect(
+    after.pools.map((p: { snapshot_id: string }) => p.snapshot_id),
+  ).toEqual(before.pools.map((p: { snapshot_id: string }) => p.snapshot_id));
+  expect(errors).toEqual([]);
+});

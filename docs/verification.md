@@ -59,3 +59,10 @@ Production collection defaults to gated until this validation is recorded. No pr
 - Approved Matt Pocock setup writes the AGENTS.md skill pointers and docs/agents configuration. Public GitHub label reads verify all five configured default labels; the existing wontfix label is retained.
 - Current-source Docker Desktop/Kind image and packaged chart installed successfully. Pool/cluster HTTP views and pinned exports, Helm hooks, restart and temporary 0.2.1-lifecycle.1 upgrade passed; exact snapshot IDs persisted. Uninstall retained the PVC and the disposable cluster was removed.
 - These changes do not replace the public 0.2.0 chart/image/tag.
+
+## Planner extensions local verification
+
+- 81 backend cases, six browser flows, TypeScript/Vite, Ruff/Prettier and Helm checks pass. New cases include combined consumption/quotas/peak limits, cross-service affinity, snapshot pins and retention/backup of all design sources. Browser coverage includes joint placements, stale-result cancellation, design comparisons/JSON/history and mobile layout.
+- Docker Desktop/Kind current feature image/chart install and HTTP bundle/design/history smoke pass. Helm hooks, snapshot-preserving restart/temporary upgrade and PVC retention pass; the disposable cluster was removed.
+- Twenty synthetic concurrent users on 16 pools/40 nodes/160 Pods: saved reads p95 0.213s, cluster reads 0.243s, single estimates 0.070s, bundles 0.056s and two-profile designs 0.147s. Zero cloud collection. Docker verification was running concurrently; real GCP/IAP and actual-inventory acceptance remain pending.
+- Both new features remain unreleased; source publication is recorded in BUILD_PLAN.md.

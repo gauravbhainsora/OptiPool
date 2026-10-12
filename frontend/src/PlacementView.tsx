@@ -78,7 +78,27 @@ export default function PlacementView({ result }: { result: Estimate }) {
             </div>
             <details>
               <summary>Can another proposed Pod fit?</summary>
-              {n.rejections.length ? (
+              {n.service_rejections ? (
+                Object.entries(n.service_rejections).map(
+                  ([service, reasons]) => (
+                    <div key={service}>
+                      <strong>{service}</strong>
+                      {reasons.length ? (
+                        <ul>
+                          {reasons.map((r) => (
+                            <li key={r}>{r}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p>
+                          No modeled constraint currently rejects another
+                          replica.
+                        </p>
+                      )}
+                    </div>
+                  ),
+                )
+              ) : n.rejections.length ? (
                 <ul>
                   {n.rejections.map((r) => (
                     <li key={r}>{r}</li>

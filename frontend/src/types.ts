@@ -158,7 +158,17 @@ export type Estimate = {
   warnings: string[];
   assumptions: string[];
   replicas: number;
-  per_replica: Resources;
+  per_replica: Resources | null;
+  total_requests?: Resources;
+  services?: {
+    key: string;
+    name: string;
+    namespace: string;
+    replicas: number;
+    placed_replicas?: number;
+    per_replica: Resources;
+    planning: { steady_replicas: number; peak_replicas: number };
+  }[];
   cost: Cost;
   placements: {
     replica: string;
@@ -193,6 +203,7 @@ export type NodeBudget = {
   remaining: Resources;
   placements: string[];
   rejections: string[];
+  service_rejections?: Record<string, string[]>;
 };
 export type Recommendation = {
   workload_id: string;

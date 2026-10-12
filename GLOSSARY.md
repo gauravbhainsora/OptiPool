@@ -55,3 +55,15 @@ _Avoid_: Live window, inventory snapshot
 **Highest-replica p99**:
 The highest temporal p99 usage among a Deployment's observed replicas within the metrics window, evaluated separately for CPU and memory.
 _Avoid_: Deployment total p99, average replica p99, pooled-sample p99
+
+**Service bundle**:
+A set of proposed service workload configurations assessed together against shared node-pool capacity.
+_Avoid_: Batch job, combined Deployment
+
+**Observed node profile**:
+A captured node configuration used as a candidate shape for capacity planning, including allocatable capacity and baseline overhead.
+_Avoid_: Machine catalog, verified new node
+
+**Node-pool design**:
+A proposed pool configuration and estimated node count for a service bundle, evaluated under stated assumptions.
+_Avoid_: Provisioned node pool, creation operation

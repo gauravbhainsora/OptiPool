@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   Calculator,
@@ -8,30 +8,23 @@ import {
 } from "lucide-react";
 import { api, params } from "./api";
 import { cores, gib, money, date, Notice } from "./components";
+import ServiceSummary from "./ServiceSummary";
+import ServiceEditor, { newService, servicePayload } from "./ServiceEditor";
 import PlacementView from "./PlacementView";
 import type { Estimate, Snapshot } from "./types";
 
 export default function Estimator({ snapshot }: { snapshot: Snapshot }) {
-  const [advanced, setAdvanced] = useState(false);
-  const [form, setForm] = useState({
-    name: "recommendation-api",
-    namespace: "commerce",
-    cpu: "500m",
-    memory: "1Gi",
-    replicas: 6,
-    manifest: "",
-    planning_mode: "steady",
-    hpa_max_replicas: 12,
-    max_surge: "25%",
-    spread_zones: false,
-  });
+  const [services, setServices] = useState(() => [newService()]);
   const [result, setResult] = useState<Estimate | null>(null);
   const [history, setHistory] = useState<
     { id: string; created: number; result: Estimate }[]
   >([]);
+  const requestRef = useRef<AbortController | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
+    requestRef.current?.abort();
+    setBusy(false);
     setResult(null);
     setHistory([]);
     const controller = new AbortController();
@@ -42,32 +35,44 @@ export default function Estimator({ snapshot }: { snapshot: Snapshot }) {
     )
       .then(setHistory)
       .catch(() => {});
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      requestRef.current?.abort();
+    };
   }, [snapshot.id, snapshot.pool.id]);
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError("");
     setResult(null);
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
     try {
       const value = await api<Estimate>(
-        `/estimate?${params({ pool_id: snapshot.pool.id })}`,
+        `/${services.length > 1 ? "estimate-bundle" : "estimate"}?${params({ pool_id: snapshot.pool.id, snapshot_id: snapshot.id })}`,
         {
           method: "POST",
-          body: JSON.stringify({
-            ...form,
-            manifest: advanced ? form.manifest : "",
-          }),
+          body: JSON.stringify(
+            services.length > 1
+              ? { services: services.map(servicePayload) }
+              : servicePayload(services[0]),
+          ),
         },
+        controller.signal,
       );
       setResult(value);
       setHistory(
-        await api(`/estimates?${params({ pool_id: snapshot.pool.id })}`),
+        await api(
+          `/estimates?${params({ pool_id: snapshot.pool.id })}`,
+          undefined,
+          controller.signal,
+        ),
       );
     } catch (e) {
-      setError((e as Error).message);
+      if ((e as Error).name !== "AbortError") setError((e as Error).message);
     } finally {
-      setBusy(false);
+      if (requestRef.current === controller) setBusy(false);
     }
   }
   return (
@@ -76,8 +81,8 @@ export default function Estimator({ snapshot }: { snapshot: Snapshot }) {
         <div>
           <h2>Plan your next deployment</h2>
           <p>
-            Test a new service against saved requests, placement rules, and node
-            budgets.
+            Assess services together against saved requests, placement rules,
+            and node budgets.
           </p>
         </div>
         <span className="pill neutral">
@@ -95,152 +100,7 @@ export default function Estimator({ snapshot }: { snapshot: Snapshot }) {
             </small>
             <p>Choose a different target using Selected node pool above.</p>
           </div>
-          <div className="segmented">
-            <button
-              type="button"
-              className={!advanced ? "active" : ""}
-              onClick={() => setAdvanced(false)}
-            >
-              Simple input
-            </button>
-            <button
-              type="button"
-              className={advanced ? "active" : ""}
-              onClick={() => setAdvanced(true)}
-            >
-              Deployment YAML
-            </button>
-          </div>
-          <label>
-            Service name
-            <input
-              required
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-            />
-          </label>
-          <label>
-            Target namespace
-            <input
-              required
-              value={form.namespace}
-              onChange={(e) => setForm({ ...form, namespace: e.target.value })}
-            />
-          </label>
-          {advanced ? (
-            <label>
-              apps/v1 Deployment
-              <textarea
-                required
-                rows={14}
-                placeholder={
-                  "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: my-service\nspec: ..."
-                }
-                value={form.manifest}
-                onChange={(e) => setForm({ ...form, manifest: e.target.value })}
-              />
-            </label>
-          ) : (
-            <>
-              <div className="form-pair">
-                <label>
-                  CPU request / replica
-                  <input
-                    required
-                    value={form.cpu}
-                    onChange={(e) => setForm({ ...form, cpu: e.target.value })}
-                  />
-                </label>
-                <label>
-                  Memory request / replica
-                  <input
-                    required
-                    value={form.memory}
-                    onChange={(e) =>
-                      setForm({ ...form, memory: e.target.value })
-                    }
-                  />
-                </label>
-              </div>
-              <label>
-                Replica count
-                <input
-                  type="number"
-                  min="0"
-                  max="2000"
-                  required
-                  value={form.replicas}
-                  onChange={(e) =>
-                    setForm({ ...form, replicas: Number(e.target.value) })
-                  }
-                />
-              </label>
-              <p className="form-hint">
-                One regular container per Pod. No affinity, storage, or injected
-                sidecars assumed. Existing demand is considered first.
-              </p>
-            </>
-          )}
-          <label>
-            Planning scenario
-            <select
-              aria-label="Planning scenario"
-              value={form.planning_mode}
-              onChange={(e) =>
-                setForm({ ...form, planning_mode: e.target.value })
-              }
-            >
-              <option value="steady">Steady replicas</option>
-              <option value="hpa">HPA maximum</option>
-              <option value="rollout">Rollout headroom</option>
-              <option value="combined">HPA maximum + rollout headroom</option>
-            </select>
-          </label>
-          {["hpa", "combined"].includes(form.planning_mode) && (
-            <label>
-              HPA maximum replicas
-              <input
-                aria-label="HPA maximum replicas"
-                type="number"
-                min="0"
-                max="2000"
-                value={form.hpa_max_replicas}
-                onChange={(e) =>
-                  setForm({ ...form, hpa_max_replicas: Number(e.target.value) })
-                }
-              />
-            </label>
-          )}
-          {["rollout", "combined"].includes(form.planning_mode) && (
-            <label>
-              Surge headroom
-              <input
-                aria-label="Surge headroom"
-                value={form.max_surge}
-                onChange={(e) =>
-                  setForm({ ...form, max_surge: e.target.value })
-                }
-              />
-              <small>
-                Integer or percentage, rounded up; planning override.
-              </small>
-            </label>
-          )}
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={form.spread_zones}
-              onChange={(e) =>
-                setForm({ ...form, spread_zones: e.target.checked })
-              }
-            />
-            Spread proposed Pods across zones
-          </label>
-          <p className="form-hint">
-            Additional demand with existing Pods fixed. Rollout headroom does
-            not simulate replacement, terminating Pods or availability
-            sequencing. HPA cap is a what-if input.
-          </p>
+          <ServiceEditor services={services} onChange={setServices} />
           <button className="button primary full" disabled={busy}>
             {busy ? "Assessing saved capacity…" : "Estimate capacity"}
             <ArrowRight size={16} />
@@ -292,10 +152,13 @@ export default function Estimator({ snapshot }: { snapshot: Snapshot }) {
                   {result.planning.peak_replicas}
                 </p>
               )}
-              <p className="muted">
-                Per replica: {cores(result.per_replica.cpu)} ·{" "}
-                {gib(result.per_replica.memory)}
-              </p>
+              {result.per_replica && (
+                <p className="muted">
+                  Per replica: {cores(result.per_replica.cpu)} ·{" "}
+                  {gib(result.per_replica.memory)}
+                </p>
+              )}
+              <ServiceSummary result={result} />
               {result.exceeds_autoscaler_max && (
                 <Notice>
                   Required growth exceeds the saved autoscaler maximum. A

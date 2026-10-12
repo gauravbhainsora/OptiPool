@@ -47,3 +47,11 @@ On-demand and three-year resource-CUD totals use saved matching USD prices, with
 With no eligible components the CUD quote is **Not applicable**, and on-demand cost remains available. Missing eligible commitment prices are **Unavailable**. A valid zero quote is preserved.
 
 An estimate exceeding the configured autoscaler max still reports its feasible candidate node count and cost, with the configuration change clearly identified. The app never changes the pool, Pods, commitments or autoscaler.
+
+## Service bundles and new-pool designs (unreleased)
+
+Capacity planner supports up to 20 services with independent requests/YAML, replicas, HPA/surge and zone inputs. One joint simulation preserves shared budgets and scheduling context; same-namespace quotas and the 2,000-replica default bound apply to combined peak demand. Service order is the bounded greedy order; feasible placement is not a minimum-node proof. Per-service rows/placements/rejections expose results, and the UI pins its displayed snapshot.
+
+New node pool uses up to 10 saved observed profiles in the selected cluster to design an empty proposed pool. It keeps saved allocatable and overhead evidence, relabels the pool, uses production/nonproduction ceilings and evaluates all proposed services together. Existing cluster Pods remain scheduling context, while existing pool capacity and pool-bound pending demand are excluded. Captured machine/provisioning/disk quotes remain exact saved assumptions; unknown prices are not guessed. Ranking prioritizes complete placements and fewer unknowns before available on-demand prices; unquoted profiles may be cheaper.
+
+The review report includes candidate total/per-zone nodes, labels/taints/capacity assumptions, placements, costs and source timestamps. JSON and saved history are available. It is a design report, not a GKE create request; regional node counts, IP/Compute quotas, network/storage/admission and DaemonSet eligibility for the new pool require operator review. No cloud resources are created. [GKE NodePool fields](https://docs.cloud.google.com/kubernetes-engine/docs/reference/rest/v1/projects.locations.clusters.nodePools) describe the infrastructure configuration an operator must validate.

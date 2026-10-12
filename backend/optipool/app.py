@@ -16,8 +16,9 @@ from .cluster_views import workload_rows as cluster_workload_rows
 from .comparison import compare
 from .config import load_settings
 from .demo import DemoCollector
-from .estimator import Scenario, estimate
+from .estimator import Scenario, ServiceBundle, estimate
 from .exports import pod_rows, pool_rows, render, workload_rows
+from .pool_design import PoolDesign, design, profile
 from .recommendations import recommend
 from .store import Store
 from .views import SavedViews
@@ -176,8 +177,10 @@ def create_app(settings=None, collector=None):
             "discovery_job": store.latest_job("all", "inventory"),
         }
 
-    def snapshot(pool_id):
-        value = store.snapshot(pool_id=pool_id, include_metrics=False)
+    def snapshot(pool_id, snapshot_id=None):
+        if snapshot_id and store.snapshot_pool_id(snapshot_id) != pool_id:
+            raise HTTPException(404, "Snapshot does not belong to the selected pool")
+        value = store.snapshot(pool_id=pool_id, snapshot_id=snapshot_id, include_metrics=False)
         if value is None:
             raise HTTPException(404, "Pool has no saved snapshot. Use Fetch latest live data.")
         return value
@@ -300,15 +303,79 @@ def create_app(settings=None, collector=None):
         return value
 
     @app.post("/api/estimate")
-    def estimate_route(scenario: Scenario, pool_id: str, actor=Depends(auth)):
+    def estimate_route(scenario: Scenario, pool_id: str, snapshot_id: str | None = None, actor=Depends(auth)):
         try:
-            value = snapshot(pool_id)
+            value = snapshot(pool_id, snapshot_id)
             if scenario.pod()[2] > settings.max_replicas:
                 raise ValueError("Replica count exceeds the configured simulation bound")
             result = estimate(value, scenario, settings.max_added_nodes, settings.max_replicas)
         except (ValueError, KeyError, TypeError) as exc:
             raise HTTPException(422, str(exc)) from None
         ident = store.save_estimate(value["id"], scenario.model_dump(), result, actor)
+        return {"id": ident, **result}
+
+    @app.post("/api/estimate-bundle")
+    def estimate_bundle(
+        scenario: ServiceBundle, pool_id: str, snapshot_id: str | None = None, actor=Depends(auth)
+    ):
+        try:
+            value = snapshot(pool_id, snapshot_id)
+            result = estimate(value, scenario, settings.max_added_nodes, settings.max_replicas)
+        except (ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(422, str(exc)) from None
+        ident = store.save_estimate(value["id"], scenario.model_dump(), result, actor)
+        return {"id": ident, **result}
+
+    def design_pools(project, location, cluster):
+        pools = [
+            p
+            for p in store.inventory()
+            if (p["project"], p["location"], p["cluster"]) == (project, location, cluster)
+        ]
+        if not pools:
+            raise HTTPException(404, "Cluster not found in saved inventory")
+        return pools
+
+    @app.get("/api/node-pool-profiles")
+    def pool_profiles(project: str, location: str, cluster: str, actor=Depends(auth)):
+        pools = design_pools(project, location, cluster)
+        profiles, missing = [], []
+        for pool in pools:
+            if not pool["available"] or not pool["snapshot_id"]:
+                missing.append(
+                    {"pool_name": pool["name"], "reason": "Pool unavailable or has no saved snapshot"}
+                )
+                continue
+            profiles.append(profile(snapshot(pool["id"], pool["snapshot_id"])))
+        return {
+            "project": project,
+            "location": location,
+            "cluster": cluster,
+            "profiles": profiles,
+            "missing": missing,
+        }
+
+    @app.get("/api/node-pool-designs")
+    def design_history(project: str, location: str, cluster: str, actor=Depends(auth)):
+        return store.designs([p["id"] for p in design_pools(project, location, cluster)])
+
+    @app.post("/api/node-pool-design")
+    def design_pool(scenario: PoolDesign, actor=Depends(auth)):
+        pools = design_pools(scenario.project, scenario.location, scenario.cluster)
+        allowed = {p["id"] for p in pools if p["available"]}
+        if not set(scenario.snapshots) <= allowed:
+            raise HTTPException(422, "Profiles must belong to the selected cluster and be available")
+        if any(p["name"] == scenario.name for p in pools):
+            raise HTTPException(422, "Choose a new pool name; this name is already in the saved inventory")
+        try:
+            values = [snapshot(pool_id, sid) for pool_id, sid in scenario.snapshots.items()]
+            result = design(values, scenario, settings.max_added_nodes, settings.max_replicas)
+        except (ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(422, str(exc)) from None
+        # The immutable report retains each candidate's provenance and outputs.
+        ident = store.save_estimate(
+            values[0]["id"], scenario.model_dump(), result, actor, sources=[v["id"] for v in values]
+        )
         return {"id": ident, **result}
 
     @app.get("/api/estimates")
