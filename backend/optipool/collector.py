@@ -240,6 +240,12 @@ class CloudCollector:
         return snapshot
 
     def metrics(self, pool, snapshot):
+        from .historical_metadata import enrich_history
+
+        result = self.current_metrics(pool, snapshot)
+        return enrich_history(self, pool, snapshot, result)
+
+    def current_metrics(self, pool, snapshot):
         now = int(time.time())
         result = {
             "cutoff": now,

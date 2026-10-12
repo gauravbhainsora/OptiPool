@@ -977,6 +977,23 @@ function Workloads({
         Sampled peaks can miss short spikes. Finer query cadence does not remove
         the CPU rate window.
       </p>
+      {snapshot.usage.historical_discovery && (
+        <details className="panel">
+          <summary>
+            Historical discovery: {snapshot.usage.historical_discovery.status} ·{" "}
+            {snapshot.usage.historical_discovery.replicas_discovered} replicas
+            discovered
+          </summary>
+          <p>
+            Metadata metric:{" "}
+            {snapshot.usage.historical_discovery.metadata_metric ??
+              "Not configured"}
+          </p>
+          {snapshot.usage.historical_discovery.reasons.map((reason) => (
+            <p key={reason}>{reason}</p>
+          ))}
+        </details>
+      )}
       {snapshot.usage.fallback_reason && (
         <Notice>{snapshot.usage.fallback_reason}</Notice>
       )}

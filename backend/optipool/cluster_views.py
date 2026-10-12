@@ -31,6 +31,7 @@ def combine(project, location, cluster, views, missing):
                     "cpu_alignment_window_seconds",
                     "resource_status",
                     "fallback_reason",
+                    "historical_discovery",
                 ]
             },
         }
