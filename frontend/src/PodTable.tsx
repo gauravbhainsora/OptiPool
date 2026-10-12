@@ -129,6 +129,7 @@ export default function PodTable({
                       {gib(m?.memory_latest)} / {gib(m?.memory_p99)}
                     </small>
                     <small>Latest / p99 · {days} days</small>
+                    <small>Sampled peak: {gib(m?.memory_peak)}</small>
                     <small>
                       CPU at {date(m?.cpu_sample_at)} · memory at{" "}
                       {date(m?.memory_sample_at)}

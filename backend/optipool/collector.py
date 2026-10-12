@@ -289,7 +289,13 @@ class CloudCollector:
                 lambda item: (
                     item[0],
                     self.get(
-                        endpoint, {"query": item[1], "start": now - 10 * 86400, "end": now, "step": 300}
+                        endpoint,
+                        {
+                            "query": item[1],
+                            "start": now - 10 * 86400,
+                            "end": now,
+                            "step": self.settings.metric_cadence_seconds,
+                        },
                     ),
                 ),
             )
@@ -369,15 +375,14 @@ class CloudCollector:
                     )
         return result
 
-    @staticmethod
-    def describe_metrics(candidate, source, memory_definition):
+    def describe_metrics(self, candidate, source, memory_definition):
         native = source == "Native GKE Cloud Monitoring"
         candidate.update(
             source=source,
             memory_definition=memory_definition,
-            cadence_seconds=300,
-            cpu_rate_window_seconds=300,
-            cpu_alignment_window_seconds=300 if native else None,
+            cadence_seconds=self.settings.metric_cadence_seconds,
+            cpu_rate_window_seconds=self.settings.metric_cadence_seconds if native else 300,
+            cpu_alignment_window_seconds=self.settings.metric_cadence_seconds if native else None,
             units={"cpu": "cores", "memory": "bytes"},
             query_definition={
                 "cpu_metric": "kubernetes.io/container/cpu/core_usage_time"
@@ -431,7 +436,7 @@ class CloudCollector:
                     "filter": filter_text,
                     "interval.startTime": iso(now - 10 * 86400),
                     "interval.endTime": iso(now),
-                    "aggregation.alignmentPeriod": "300s",
+                    "aggregation.alignmentPeriod": f"{self.settings.metric_cadence_seconds}s",
                     "aggregation.perSeriesAligner": aligner,
                 },
             )
@@ -443,7 +448,12 @@ class CloudCollector:
                 for p in s.get("points", []):
                     t = timestamp(p["interval"]["endTime"])
                     if (
-                        t < max(now - 10 * 86400, pod["created"] + (300 if resource == "cpu" else 0))
+                        t
+                        < max(
+                            now - 10 * 86400,
+                            pod["created"]
+                            + (self.settings.metric_cadence_seconds if resource == "cpu" else 0),
+                        )
                         or t > now
                     ):
                         continue
@@ -466,7 +476,7 @@ class CloudCollector:
             result.update(
                 source="Native GKE Cloud Monitoring",
                 memory_definition="Non-evictable memory",
-                cadence_seconds=300,
+                cadence_seconds=self.settings.metric_cadence_seconds,
             )
 
     def prices(self, pool):

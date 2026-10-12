@@ -532,6 +532,18 @@ test("saved metric source details show partial resources and legacy unknown quer
     const body = await response.json();
     body.usage = {
       ...body.usage,
+      workloads: Object.fromEntries(
+        Object.entries(body.usage.workloads).map(([key, value]) => [
+          key,
+          { ...(value as object), memory_peak: 4 * 1024 ** 3 },
+        ]),
+      ),
+      pods: Object.fromEntries(
+        Object.entries(body.usage.pods).map(([key, value]) => [
+          key,
+          { ...(value as object), memory_peak: 4 * 1024 ** 3 },
+        ]),
+      ),
       source: "GMP cAdvisor",
       memory_definition: "Working set",
       cadence_seconds: 60,
@@ -562,6 +574,23 @@ test("saved metric source details show partial resources and legacy unknown quer
     page.getByText("Native unavailable; selected GMP partial observations", {
       exact: false,
     }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("columnheader", {
+      name: "Sampled memory peak",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("cell", {
+        name: "4.00 GiB Highest observed replica sample",
+        exact: true,
+      })
+      .first(),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Sampled peak: 4.00 GiB", { exact: false }).first(),
   ).toBeVisible();
   await page.getByText("Saved query definitions", { exact: true }).click();
   await expect(
