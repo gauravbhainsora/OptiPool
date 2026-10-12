@@ -15,6 +15,11 @@ class Settings(BaseModel):
     environment: dict[str, str] = Field(default_factory=dict)
     pricing_mappings: dict[str, dict] = Field(default_factory=dict)
     metric_cadence_seconds: Literal[60, 300] = 300
+    historical_metadata_metric: str | None = Field(None, pattern=r"^[a-zA-Z_:][a-zA-Z0-9_:]{0,127}$")
+    historical_metadata_step_seconds: int = Field(300, ge=60, le=300)
+    historical_metadata_lookback_days: int = Field(10, ge=1, le=10)
+    historical_metadata_max_requests: int = Field(400, ge=2, le=2000)
+    historical_metadata_max_replicas: int = Field(200, ge=1, le=1000)
     min_metric_samples: int = Field(20, ge=1, le=100_000)
     min_reduction_observation_seconds: int = Field(86400, ge=1, le=864000)
     min_reduction_coverage: float = Field(0.9, ge=0, le=1)

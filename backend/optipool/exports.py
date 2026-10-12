@@ -105,7 +105,12 @@ def metric_provenance(usage):
     usage = usage or {}
     definition = usage.get("query_definition") or {}
     units = usage.get("units") or {}
+    discovery = usage.get("historical_discovery") or {}
     return {
+        "Historical discovery status": discovery.get("status", "Unknown"),
+        "Historical metadata metric": discovery.get("metadata_metric"),
+        "Historical replicas discovered": discovery.get("replicas_discovered"),
+        "Historical discovery reasons": "; ".join(discovery.get("reasons", [])),
         "Metric source": usage.get("source", "Unknown"),
         "Memory definition": usage.get("memory_definition", "Unknown"),
         "Query cadence seconds": usage.get("cadence_seconds"),

@@ -251,6 +251,10 @@ def summarize(
             partial = (
                 resource in excluded_resources
                 or bool(snapshot["metrics"].get("attribution_gaps"))
+                or any(
+                    detail.get("workload") == workload["id"] and detail.get("resource") == resource
+                    for detail in snapshot["metrics"].get("attribution_gap_details", [])
+                )
                 or len(current_members) < workload.get("pool_replicas", 0)
                 or any(e is None or e["valid_samples"] < minimum for e in member_evidence)
             )
@@ -283,12 +287,14 @@ def summarize(
                 "resource_status", {"cpu": "unknown", "memory": "unknown"}
             ),
             "fallback_reason": snapshot["metrics"].get("fallback_reason"),
+            "historical_discovery": snapshot["metrics"].get("historical_discovery"),
             "coverage": snapshot["metrics"].get("coverage", "unavailable"),
             "cadence_seconds": cadence,
             "minimum_samples": minimum,
             "reduction_policy": policy,
             "warnings": warnings,
             "attribution_gaps": snapshot["metrics"].get("attribution_gaps", []),
+            "attribution_gap_details": snapshot["metrics"].get("attribution_gap_details", []),
             "historical_replicas": [{"uid": uid, **m} for uid, m in pod_metrics.items() if m["historical"]],
         },
         risk_policy,

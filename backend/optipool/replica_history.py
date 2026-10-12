@@ -83,6 +83,43 @@ def merge_history(snapshot, previous, snapshot_id):
         observed_records = inventory_evidence(item)
         records = {uid: {**observed_records.get(uid, {}), **record} for uid, record in records.items()}
         source_workloads = {w["id"]: w for w in item.get("workloads", [])}
+        # Valid upstream identities remain expected replicas even with no compatible
+        # usage. Keeping them prevents an available current replica from hiding a
+        # discovered replica whose CPU or memory observations are unavailable.
+        discovered = (source_metrics.get("historical_discovery") or {}).get("replica_evidence", {})
+        for uid, record in discovered.items():
+            record = {**observed_records.get(uid, {}), **record}
+            workload = record.get("workload", "")
+            active = current_workloads.get(workload)
+            memberships = [
+                m
+                for m in record.get("memberships", [])
+                if m.get("pool_id") == pool_id
+                and m.get("node")
+                and m.get("node_uid")
+                and isinstance(m.get("provenance"), dict)
+                and m["provenance"].get("contract") == "optipool-membership-v1"
+                and record.get("created", math.inf) <= m.get("start", -math.inf) <= m.get("end", -math.inf)
+                and m["start"] <= cutoff
+                and m["end"] >= start
+            ]
+            if (
+                record.get("uid") == uid
+                and record.get("controller_uid")
+                and workload.startswith(record.get("namespace", "") + "/")
+                and memberships
+                and (not active or active.get("controller_uid") == record["controller_uid"])
+            ):
+                known = evidence.get(uid)
+                if known and any(
+                    known.get(k) != record.get(k) for k in ["workload", "controller_uid", "created"]
+                ):
+                    reject(uid, "Conflicting replica identity")
+                    continue
+                evidence.setdefault(uid, deepcopy(record))
+                for membership in memberships:
+                    if membership not in evidence[uid]["memberships"]:
+                        evidence[uid]["memberships"].append(deepcopy(membership))
         for sample in source_metrics.get("samples", []):
             uid, timestamp = sample.get("replica"), sample.get("time")
             if not isinstance(timestamp, (int, float)) or not start <= timestamp <= cutoff:
@@ -222,7 +259,8 @@ def merge_history(snapshot, previous, snapshot_id):
         if resource in point
     }
     metrics["attribution_gaps"] = sorted(
-        reason for reason, pairs in rejected_pairs.items() if pairs - accepted
+        set(metrics.get("attribution_gaps", []))
+        | {reason for reason, pairs in rejected_pairs.items() if pairs - accepted}
     )
     metrics["history_exclusions"] = sorted(rejected)
     warnings.extend(
@@ -265,7 +303,7 @@ def merge_history(snapshot, previous, snapshot_id):
             result["workloads"].append(row)
     if points:
         metrics["coverage"] = (
-            "partial — evidenced current and previously observed replicas; unobserved history may be missing"
+            "partial — evidenced current, saved and upstream replicas; unsupported history may be missing"
         )
     else:
         metrics["coverage"] = "unavailable — no time-bounded attributable samples"

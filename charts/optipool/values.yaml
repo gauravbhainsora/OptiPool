@@ -17,6 +17,12 @@ config:
   live_validation_complete: false
   min_metric_samples: 20
   metric_cadence_seconds: 300
+  # Optional existing joined interval source; see docs/historical-metadata.md.
+  historical_metadata_metric: null
+  historical_metadata_step_seconds: 300
+  historical_metadata_lookback_days: 10
+  historical_metadata_max_replicas: 200
+  historical_metadata_max_requests: 400
   min_reduction_observation_seconds: 86400
   min_reduction_coverage: 0.9
   collect_risk_metrics: false

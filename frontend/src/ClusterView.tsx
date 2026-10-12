@@ -58,6 +58,15 @@ export default function ClusterView({
             <br />
             CPU observations: {s.resource_status?.cpu ?? "unknown"} · Memory
             observations: {s.resource_status?.memory ?? "unknown"}
+            {s.historical_discovery && (
+              <>
+                <br />
+                Historical discovery: {s.historical_discovery.status} ·{" "}
+                {s.historical_discovery.replicas_discovered} replicas discovered
+                <br />
+                {s.historical_discovery.reasons.join("; ")}
+              </>
+            )}
             {s.fallback_reason && (
               <>
                 <br />

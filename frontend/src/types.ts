@@ -79,6 +79,12 @@ export type Usage = {
   query_definition: Record<string, string> | null;
   units: Record<string, string> | null;
   resource_status: { cpu: string; memory: string };
+  historical_discovery?: {
+    status: string;
+    metadata_metric?: string;
+    replicas_discovered: number;
+    reasons: string[];
+  } | null;
   fallback_reason: string | null;
   minimum_samples: number;
   warnings: string[];
@@ -289,6 +295,7 @@ export type ScopeSource = Pick<
   | "units"
   | "resource_status"
   | "fallback_reason"
+  | "historical_discovery"
 > & {
   pool_id: string;
   pool_name: string;

@@ -240,6 +240,31 @@ class CloudCollector:
         return snapshot
 
     def metrics(self, pool, snapshot):
+        from .historical_metadata import enrich_history
+
+        result = enrich_history(self, pool, snapshot, self.current_metrics(pool, snapshot))
+        selected_names = {node["name"] for node in snapshot["nodes"]}
+        pods = {
+            (p["namespace"], p["name"]): p
+            for p in snapshot["context"]["pods"]
+            if p.get("workload") and p.get("node") in selected_names
+        }
+        for record in result.get("replica_evidence", {}).values():
+            if record.get("spec"):
+                pods.setdefault((record["namespace"], record["name"]), record)
+        now = result["cutoff"]
+        if self.settings.collect_risk_metrics:
+            try:
+                result["risk"] = self.risk_metrics(pool, pods, now)
+            except Exception as exc:
+                result["risk"] = {
+                    "source": "Unavailable",
+                    "series": [],
+                    "warnings": ["Optional risk collection unavailable: " + str(exc)[:200]],
+                }
+        return result
+
+    def current_metrics(self, pool, snapshot):
         now = int(time.time())
         result = {
             "cutoff": now,
@@ -373,15 +398,6 @@ class CloudCollector:
                     result["warnings"].append(
                         f"{resource.capitalize()} observations unavailable from selected source"
                     )
-        if self.settings.collect_risk_metrics:
-            try:
-                result["risk"] = self.risk_metrics(pool, pods, now)
-            except Exception as exc:
-                result["risk"] = {
-                    "source": "Unavailable",
-                    "series": [],
-                    "warnings": ["Optional risk collection unavailable: " + str(exc)[:200]],
-                }
         return result
 
     def risk_metrics(self, pool, pods, cutoff):
