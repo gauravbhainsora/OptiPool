@@ -17,12 +17,22 @@ def summarize(snapshot, days, minimum=20):
     cadence = snapshot["metrics"].get("cadence_seconds")
     observed = {p["uid"]: p for p in snapshot.get("context", {}).get("pods", [])}
     replicas = defaultdict(dict)
+    warnings = list(snapshot["metrics"].get("warnings", []))
+    memory_definition = snapshot["metrics"].get("memory_definition", "Unknown")
     for sample in snapshot["metrics"].get("samples", []):
         if start <= sample["time"] <= cutoff and sample.get("attributed"):
-            point = replicas[(sample["workload"], sample["replica"])].setdefault(sample["time"], {})
             for resource in ["cpu", "memory"]:
+                if (
+                    resource == "memory"
+                    and sample.get("memory_definition", memory_definition) != memory_definition
+                ):
+                    warning = "Excluded samples with incompatible memory definition from saved window"
+                    if warning not in warnings:
+                        warnings.append(warning)
+                    continue
                 value = sample.get(resource)
                 if value is not None and math.isfinite(value) and value >= 0:
+                    point = replicas[(sample["workload"], sample["replica"])].setdefault(sample["time"], {})
                     point[resource] = value
     workloads, pod_metrics = {}, {}
     timeline = defaultdict(lambda: {"cpu": None, "memory": None})
@@ -72,9 +82,17 @@ def summarize(snapshot, days, minimum=20):
         "pods": pod_metrics,
         "timeline": [{"time": t, **v} for t, v in sorted(timeline.items())],
         "source": snapshot["metrics"].get("source", "Unavailable"),
-        "memory_definition": snapshot["metrics"].get("memory_definition", "Unavailable"),
+        "memory_definition": snapshot["metrics"].get("memory_definition", "Unknown"),
+        "query_definition": snapshot["metrics"].get("query_definition"),
+        "units": snapshot["metrics"].get("units"),
+        "cpu_rate_window_seconds": snapshot["metrics"].get("cpu_rate_window_seconds"),
+        "cpu_alignment_window_seconds": snapshot["metrics"].get("cpu_alignment_window_seconds"),
+        "resource_status": snapshot["metrics"].get(
+            "resource_status", {"cpu": "unknown", "memory": "unknown"}
+        ),
+        "fallback_reason": snapshot["metrics"].get("fallback_reason"),
         "coverage": snapshot["metrics"].get("coverage", "unavailable"),
         "cadence_seconds": cadence,
         "minimum_samples": minimum,
-        "warnings": snapshot["metrics"].get("warnings", []),
+        "warnings": warnings,
     }

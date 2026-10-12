@@ -470,3 +470,58 @@ test("new node pool design compares saved profiles, downloads and restores histo
   ).toEqual(before.pools.map((p: { snapshot_id: string }) => p.snapshot_id));
   expect(errors).toEqual([]);
 });
+
+test("saved metric source details show partial resources and legacy unknown query fields", async ({
+  page,
+}) => {
+  let collectionRequests = 0;
+  page.on("request", (request) => {
+    if (request.url().includes("/api/refresh/")) collectionRequests += 1;
+  });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Workloads", exact: true }).click();
+  await expect(
+    page.getByText("CPU rate window: Unknown", { exact: false }),
+  ).toBeVisible();
+  await page.route("**/api/snapshot?**", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.usage = {
+      ...body.usage,
+      source: "GMP cAdvisor",
+      memory_definition: "Working set",
+      cadence_seconds: 60,
+      cpu_rate_window_seconds: 300,
+      resource_status: { cpu: "available", memory: "unavailable" },
+      units: { cpu: "cores", memory: "bytes" },
+      query_definition: {
+        cpu_metric: "container_cpu_usage_seconds_total",
+        memory_metric: "container_memory_working_set_bytes",
+        cpu_aggregation: "sum containers after rate[5m]",
+        memory_aggregation: "sum container samples",
+      },
+      fallback_reason: "Native unavailable; selected GMP partial observations",
+    };
+    await route.fulfill({ response, json: body });
+  });
+  await page.getByRole("slider", { name: "Usage lookback days" }).fill("5");
+  await expect(
+    page.getByText("Source: GMP cAdvisor", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Memory observations: unavailable", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("CPU rate window: 300s", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Native unavailable; selected GMP partial observations", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await page.getByText("Saved query definitions", { exact: true }).click();
+  await expect(
+    page.getByText("container_memory_working_set_bytes", { exact: false }),
+  ).toBeVisible();
+  expect(collectionRequests).toBe(0);
+});

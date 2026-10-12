@@ -1,6 +1,8 @@
 """Combine saved pool observations; retain independent capture times and pool identity."""
 
-from .exports import iso
+import json
+
+from .exports import iso, metric_provenance
 
 
 def combine(project, location, cluster, views, missing):
@@ -17,6 +19,18 @@ def combine(project, location, cluster, views, missing):
             "memory_definition": usage["memory_definition"],
             "coverage": usage["coverage"],
             "synthetic": pool.get("synthetic", False),
+            **{
+                key: usage.get(key)
+                for key in [
+                    "query_definition",
+                    "units",
+                    "cadence_seconds",
+                    "cpu_rate_window_seconds",
+                    "cpu_alignment_window_seconds",
+                    "resource_status",
+                    "fallback_reason",
+                ]
+            },
         }
         sources.append(source)
         for node in value["nodes"]:
@@ -110,6 +124,9 @@ def workload_rows(scope):
             ),
             "Metric sources": ", ".join(sorted({p["source"] for p in w["pools"]})),
             "Memory definitions": ", ".join(w["memory_definitions"]),
+            "Metric evidence per pool": json.dumps(
+                {p["pool_name"]: metric_provenance(p) for p in w["pools"]}, sort_keys=True
+            ),
             "CPU p99 pool": w["cpu_pool"],
             "CPU p99 replica": w["cpu_replica"],
             "Memory p99 pool": w["memory_pool"],
