@@ -135,6 +135,8 @@ def summarize(snapshot, days, minimum=20, minimum_observation_seconds=86400, min
                 "memory_p99": None,
                 "cpu_replica": None,
                 "memory_replica": None,
+                "memory_peak": None,
+                "memory_peak_replica": None,
                 "replicas_observed": 0,
                 "samples": 0,
             },
@@ -169,6 +171,13 @@ def summarize(snapshot, days, minimum=20, minimum_observation_seconds=86400, min
             metric[resource + "_coverage"] = min(1, len(values) / expected) if expected else None
             metric[resource + "_p99"] = percentile(values) if len(values) >= minimum else None
             metric[resource + "_peak"] = max(values) if values else None
+            if (
+                resource == "memory"
+                and metric["memory_peak"] is not None
+                and (target["memory_peak"] is None or metric["memory_peak"] > target["memory_peak"])
+            ):
+                target["memory_peak"] = metric["memory_peak"]
+                target["memory_peak_replica"] = replica
             latest = max(
                 (
                     t
