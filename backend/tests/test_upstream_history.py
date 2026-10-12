@@ -348,7 +348,22 @@ def test_native_usage_stays_distinct_while_discovered_identity_is_saved(settings
     now = int(time.time())
     collector.pages = lambda url, field, params: [
         {
-            "resource": {"labels": {"namespace_name": "shop", "pod_name": "api-one"}},
+            "resource": {
+                "type": "k8s_container",
+                "labels": {
+                    "project_id": core["pool"]["project"],
+                    "location": core["pool"]["location"],
+                    "cluster_name": core["pool"]["cluster"],
+                    "namespace_name": "shop",
+                    "pod_name": "api-one",
+                    "container_name": "api",
+                },
+            },
+            "metric": {
+                "type": "kubernetes.io/container/"
+                + ("cpu/core_usage_time" if "cpu/" in params["filter"] else "memory/used_bytes"),
+                "labels": {"memory_type": "non-evictable"},
+            },
             "points": [
                 {
                     "interval": {"endTime": datetime.datetime.fromtimestamp(now, datetime.UTC).isoformat()},
@@ -409,7 +424,22 @@ def test_discovered_missing_native_incompatible_replica_withholds_otherwise_elig
     core["context"]["pods"][0]["restarts"] = 0
     collector.pages = lambda url, field, params: [
         {
-            "resource": {"labels": {"namespace_name": "shop", "pod_name": "api-one"}},
+            "resource": {
+                "type": "k8s_container",
+                "labels": {
+                    "project_id": core["pool"]["project"],
+                    "location": core["pool"]["location"],
+                    "cluster_name": core["pool"]["cluster"],
+                    "namespace_name": "shop",
+                    "pod_name": "api-one",
+                    "container_name": "api",
+                },
+            },
+            "metric": {
+                "type": "kubernetes.io/container/"
+                + ("cpu/core_usage_time" if "cpu/" in params["filter"] else "memory/used_bytes"),
+                "labels": {"memory_type": "non-evictable"},
+            },
             "points": [
                 {
                     "interval": {

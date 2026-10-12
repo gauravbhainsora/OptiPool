@@ -398,7 +398,22 @@ def test_partial_gmp_survives_failed_native_without_source_mixing(saved, setting
             raise ValueError("memory batch failed")
         return [
             {
-                "resource": {"labels": {"namespace_name": pod["namespace"], "pod_name": pod["name"]}},
+                "resource": {
+                    "type": "k8s_container",
+                    "labels": {
+                        "project_id": saved["pool"]["project"],
+                        "location": saved["pool"]["location"],
+                        "cluster_name": saved["pool"]["cluster"],
+                        "namespace_name": pod["namespace"],
+                        "pod_name": pod["name"],
+                        "container_name": pod["spec"]["containers"][0]["name"],
+                    },
+                },
+                "metric": {
+                    "type": "kubernetes.io/container/"
+                    + ("cpu/core_usage_time" if "cpu/" in params["filter"] else "memory/used_bytes"),
+                    "labels": {"memory_type": "non-evictable"},
+                },
                 "points": [{"interval": {"endTime": "2024-10-04T00:00:00Z"}, "value": {"doubleValue": 99}}],
             }
         ]
@@ -444,7 +459,22 @@ def test_failed_gmp_candidate_never_leaks_into_native(saved, settings, failure):
     def native(url, field, params):
         return [
             {
-                "resource": {"labels": {"namespace_name": pod["namespace"], "pod_name": pod["name"]}},
+                "resource": {
+                    "type": "k8s_container",
+                    "labels": {
+                        "project_id": saved["pool"]["project"],
+                        "location": saved["pool"]["location"],
+                        "cluster_name": saved["pool"]["cluster"],
+                        "namespace_name": pod["namespace"],
+                        "pod_name": pod["name"],
+                        "container_name": pod["spec"]["containers"][0]["name"],
+                    },
+                },
+                "metric": {
+                    "type": "kubernetes.io/container/"
+                    + ("cpu/core_usage_time" if "cpu/" in params["filter"] else "memory/used_bytes"),
+                    "labels": {"memory_type": "non-evictable"},
+                },
                 "points": [
                     {
                         "interval": {
@@ -518,10 +548,20 @@ def test_native_alignment_records_actual_cpu_window(saved, settings, cadence):
         return [
             {
                 "resource": {
+                    "type": "k8s_container",
                     "labels": {
+                        "project_id": saved["pool"]["project"],
+                        "location": saved["pool"]["location"],
+                        "cluster_name": saved["pool"]["cluster"],
                         "namespace_name": pod["namespace"],
                         "pod_name": pod["name"],
-                    }
+                        "container_name": pod["spec"]["containers"][0]["name"],
+                    },
+                },
+                "metric": {
+                    "type": "kubernetes.io/container/"
+                    + ("cpu/core_usage_time" if "cpu/" in params["filter"] else "memory/used_bytes"),
+                    "labels": {"memory_type": "non-evictable"},
                 },
                 "points": [
                     {
@@ -552,3 +592,78 @@ def test_metric_cadence_configuration_rejects_unsupported_values():
     for cadence in [0, 30, 120, "invalid"]:
         with pytest.raises(ValidationError):
             Settings(metric_cadence_seconds=cadence)
+
+
+@pytest.mark.parametrize(
+    "foreign", ["project", "location", "cluster", "type", "container", "uid", "metric", "memory"]
+)
+def test_native_fallback_excludes_foreign_same_name_series(saved, settings, foreign):
+    import datetime
+    import time
+
+    collector = object.__new__(CloudCollector)
+    collector.settings = settings
+    pod = saved["context"]["pods"][0]
+    pod["created"] = time.time() - 1000
+    collector.get = lambda *args: {"status": "success", "data": {"result": []}}
+    requests = []
+
+    def native(url, field, params):
+        requests.append(params)
+        cpu = "cpu/" in params["filter"]
+        selected = {
+            "resource": {
+                "type": "k8s_container",
+                "labels": {
+                    "project_id": saved["pool"]["project"],
+                    "location": saved["pool"]["location"],
+                    "cluster_name": saved["pool"]["cluster"],
+                    "namespace_name": pod["namespace"],
+                    "pod_name": pod["name"],
+                    "container_name": pod["spec"]["containers"][0]["name"],
+                },
+            },
+            "metric": {
+                "type": "kubernetes.io/container/" + ("cpu/core_usage_time" if cpu else "memory/used_bytes"),
+                "labels": {} if cpu else {"memory_type": "non-evictable"},
+            },
+            "points": [
+                {
+                    "interval": {
+                        "endTime": datetime.datetime.fromtimestamp(int(time.time()), datetime.UTC).isoformat()
+                    },
+                    "value": {"doubleValue": 1},
+                }
+            ],
+        }
+        invalid = deepcopy(selected)
+        invalid["points"][0]["value"]["doubleValue"] = 9
+        target = {
+            "project": "project_id",
+            "location": "location",
+            "cluster": "cluster_name",
+            "container": "container_name",
+        }
+        if foreign in target:
+            invalid["resource"]["labels"][target[foreign]] = "foreign"
+        elif foreign == "type":
+            invalid["resource"]["type"] = "k8s_pod"
+        elif foreign == "uid":
+            invalid["resource"]["labels"]["pod_uid"] = "foreign-lifetime"
+        elif foreign == "metric":
+            invalid["metric"]["type"] = "wrong.metric"
+        else:
+            invalid["metric"]["labels"]["memory_type"] = "evictable"
+            if cpu:
+                return [selected]
+        return [selected, invalid]
+
+    collector.pages = native
+    result = collector.metrics(saved["pool"], saved)
+    assert result["source"] == "Native GKE Cloud Monitoring"
+    assert result["samples"][0]["cpu"] == 1 and result["samples"][0]["memory"] == 1
+    assert all(
+        'resource.type="k8s_container"' in p["filter"]
+        and f'resource.labels.project_id="{saved["pool"]["project"]}"' in p["filter"]
+        for p in requests
+    )

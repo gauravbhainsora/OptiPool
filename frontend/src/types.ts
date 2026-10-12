@@ -351,6 +351,9 @@ export type ClusterSnapshot = {
 };
 
 export type Risk = {
+  collection_status?: string;
+  collection_warnings?: string[];
+  retained_snapshot_ids?: string[];
   cadence_seconds: number | null;
   minimum_observation_seconds: number;
   minimum_coverage: number;

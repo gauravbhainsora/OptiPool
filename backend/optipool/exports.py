@@ -36,6 +36,9 @@ def evidence_columns(metric):
             "eligible",
         ]:
             columns[f"{label} risk {field.replace('_', ' ')}"] = risk.get(field)
+        columns[f"{label} risk collection status"] = risk.get("collection_status", "unknown")
+        columns[f"{label} risk collection warnings"] = "; ".join(risk.get("collection_warnings", []))
+        columns[f"{label} risk retained snapshot IDs"] = "; ".join(risk.get("retained_snapshot_ids", []))
         columns[f"{label} risk reasons"] = "; ".join(risk.get("reasons", []))
         columns[f"{label} risk limitations"] = "; ".join(risk.get("limitations", []))
         for field, title in [

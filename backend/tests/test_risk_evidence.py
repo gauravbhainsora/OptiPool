@@ -67,7 +67,7 @@ def test_high_throttling_and_historical_oom_withhold_independent_reductions(sett
         assert collector.calls == before
 
 
-def test_required_missing_denominator_and_legacy_risk_are_unknown_not_zero(settings):
+def test_required_missing_denominator_stays_unknown_when_other_saved_risk_is_recovered(settings):
     app = create_app(settings)
     with TestClient(app) as client:
         pool = initialized(client)["pools"][0]
@@ -84,9 +84,11 @@ def test_required_missing_denominator_and_legacy_risk_are_unknown_not_zero(setti
         snapshot["metrics"].pop("risk")
         sid = app.state.store.publish_snapshot(pool["id"], snapshot)
         row = client.get("/api/recommendations", params={**query, "snapshot_id": sid}).json()["rows"][0]
-        assert row["memory_risk"]["status"] == "unknown"
-        assert row["memory_risk"]["oom_events"] is None
-        assert row["proposed"] == {"cpu": None, "memory": None}
+        # Missing fresh metadata recovers valid memory counts without inventing a CPU denominator.
+        assert row["memory_risk"]["status"] == "available"
+        assert row["memory_risk"]["oom_events"] == 0
+        assert row["cpu_risk"]["status"] == "unknown" and row["cpu_risk"]["denominator"] is None
+        assert row["proposed"]["cpu"] is None and row["proposed"]["memory"] is not None
 
 
 def test_risk_policy_threshold_and_explicit_optional_unknown(settings):
@@ -305,3 +307,96 @@ def test_zero_denominator_is_unknown_and_configured_opt_out_is_visible(settings)
         assert row["cpu_risk"]["denominator"] == 0 and row["cpu_risk"]["ratio"] is None
         assert row["cpu_risk"]["required"] is False and row["proposed"]["cpu"] is not None
         assert "Optional" in " ".join(row["cpu_risk"]["reasons"])
+
+
+def test_cpu_risk_rejects_explicit_conflicting_pod_lifetime(saved, settings):
+    from optipool.collector import CloudCollector
+
+    pod = saved["context"]["pods"][0]
+    cutoff = saved["metrics"]["cutoff"]
+    collector = object.__new__(CloudCollector)
+    collector.settings = settings
+    collector.get = lambda *args: dict(
+        status="success",
+        data=dict(
+            resultType="matrix",
+            result=[
+                dict(
+                    metric=dict(
+                        namespace=pod["namespace"],
+                        pod=pod["name"],
+                        container=pod["spec"]["containers"][0]["name"],
+                        uid="different-pod-lifetime",
+                    ),
+                    values=[[cutoff - 300, "1"], [cutoff, "2"]],
+                )
+            ],
+        ),
+    )
+    result = collector.risk_metrics(saved["pool"], {(pod["namespace"], pod["name"]): pod}, cutoff)
+    assert result["series"] == []
+
+
+def test_optional_risk_failure_keeps_adverse_saved_history_and_failure_provenance(settings, iap_headers):
+    from copy import deepcopy
+
+    settings.require_memory_risk_evidence = False
+    collector = CountingCollector(settings)
+    app = create_app(settings, collector)
+    with TestClient(app, headers=iap_headers) as client:
+        pool = initialized(client)["pools"][0]
+        first = app.state.store.snapshot(pool_id=pool["id"])
+        risk_history(first, throttled=0, oom=1)
+        old = app.state.store.publish_snapshot(pool["id"], first)
+        second = deepcopy(first)
+        second["metrics"]["risk"] = dict(
+            source="Unavailable", series=[], warnings=["Optional risk source forbidden"]
+        )
+        sid = app.state.store.publish_snapshot(pool["id"], second)
+        before = collector.calls
+        query = dict(pool_id=pool["id"], snapshot_id=sid, days=1)
+        row = client.get("/api/recommendations", params=query).json()["rows"][0]
+        assert row["memory_risk"]["oom_events"] == 858 and row["memory_risk"]["adverse"]
+        assert row["proposed"]["memory"] is None
+        risk = client.get("/api/snapshot", params=query).json()["usage"]["workloads"][row["workload_id"]][
+            "memory_risk"
+        ]
+        assert risk["source"] == "Synthetic reset-aware counters"
+        assert risk["collection_status"] == "retained after unavailable collection"
+        assert "forbidden" in " ".join(risk["collection_warnings"])
+        assert old in risk["retained_snapshot_ids"]
+        exported = next(
+            csv.DictReader(
+                io.StringIO(client.get("/api/export/workloads", params=query).content.decode("utf-8-sig"))
+            )
+        )
+        assert exported["Memory risk oom events"] == "858"
+        assert "forbidden" in exported["Memory risk collection warnings"]
+        assert collector.calls == before
+        # A missing risk object follows the same safe recovery path.
+        second["metrics"].pop("risk")
+        new = app.state.store.publish_snapshot(pool["id"], second)
+        risk = client.get("/api/recommendations", params={**query, "snapshot_id": new}).json()["rows"][0][
+            "memory_risk"
+        ]
+        assert risk["adverse"] and risk["oom_events"] == 858
+
+
+def test_legacy_snapshot_without_any_saved_risk_remains_unknown(settings, iap_headers):
+    class LegacyCollector(CountingCollector):
+        def collect(self, pool):
+            snapshot = super().collect(pool)
+            cutoff = snapshot["metrics"]["cutoff"]
+            times = list(range(cutoff - 86400, cutoff + 1, 300))
+            history(snapshot, times, times)  # Low usage would propose reductions without risk guards.
+            snapshot["metrics"].pop("risk", None)
+            return snapshot
+
+    app = create_app(settings, LegacyCollector(settings))
+    with TestClient(app, headers=iap_headers) as client:
+        pool = initialized(client)["pools"][0]
+        row = client.get("/api/recommendations", params=dict(pool_id=pool["id"], days=1)).json()["rows"][0]
+        assert row["memory_risk"]["status"] == "unknown"
+        assert row["memory_risk"]["oom_events"] is None
+        assert row["cpu_risk"]["denominator"] is None
+        assert row["proposed"] == {"cpu": None, "memory": None}

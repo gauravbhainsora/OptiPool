@@ -231,3 +231,46 @@ def test_sparse_nonwinning_replica_cannot_make_workload_reduction_eligible(setti
         assert any(
             weak["uid"] in reason and "duration" in reason for reason in row["reduction_reasons"]["cpu"]
         )
+
+
+def test_attribution_failure_is_scoped_to_replica_workload_and_resource(settings, iap_headers):
+    collector = CountingCollector(settings)
+    app = create_app(settings, collector)
+    with TestClient(app, headers=iap_headers) as client:
+        pool = initialized(client)["pools"][0]
+        snapshot = app.state.store.snapshot(pool_id=pool["id"])
+        cutoff = snapshot["metrics"]["cutoff"]
+        times = list(range(cutoff - 86400, cutoff + 1, 300))
+        history(snapshot, times, times)
+        # Only one replica's CPU is invalid; its memory and another workload remain complete.
+        weak = snapshot["context"]["pods"][0]
+        for sample in snapshot["metrics"]["samples"]:
+            if sample["replica"] == weak["uid"]:
+                sample["source"] = snapshot["metrics"]["source"]
+                sample["cpu"] = None
+        snapshot["metrics"]["attribution_gap_details"] = [
+            dict(
+                replica=weak["uid"],
+                workload=weak["workload"],
+                resource="cpu",
+                reason="Missing CPU lifetime evidence",
+            )
+        ]
+        # Legacy/generic summary must not turn a scoped detail into a global failure.
+        snapshot["metrics"]["attribution_gaps"] = ["Missing CPU lifetime evidence"]
+        sid = app.state.store.publish_snapshot(pool["id"], snapshot)
+        query = dict(pool_id=pool["id"], snapshot_id=sid, days=1)
+        before = collector.calls
+        view = client.get("/api/snapshot", params=query).json()
+        failing = view["usage"]["workloads"][weak["workload"]]
+        assert failing["cpu_evidence"]["partial"] and not failing["cpu_evidence"]["eligible"]
+        assert failing["memory_evidence"]["eligible"] and not failing["memory_evidence"]["partial"]
+        other = next(w for w in view["workloads"] if w["id"] != weak["workload"])
+        assert view["usage"]["workloads"][other["id"]]["cpu_evidence"]["eligible"]
+        exported = list(
+            csv.DictReader(
+                io.StringIO(client.get("/api/export/workloads", params=query).content.decode("utf-8-sig"))
+            )
+        )
+        assert exported[0]["Memory reduction eligible"] == "True"
+        assert collector.calls == before

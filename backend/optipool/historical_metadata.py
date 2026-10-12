@@ -369,6 +369,7 @@ def enrich_history(collector, pool, snapshot, metrics):
         "Historical metadata and usage gaps remain possible; discovery does not prove complete window coverage"
     )
     report["reasons"] = sorted(reasons)
+    metrics.setdefault("attribution_global_gaps", []).extend(sorted(global_gaps))
     metrics.setdefault("attribution_gaps", []).extend(sorted(global_gaps))
     metrics.setdefault("attribution_gap_details", []).extend(gap_details)
     metrics["warnings"].extend(report["reasons"])

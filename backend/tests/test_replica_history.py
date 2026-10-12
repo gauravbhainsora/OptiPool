@@ -267,6 +267,9 @@ def test_unknown_cpu_rate_window_does_not_infer_lifetime_attribution(settings, s
     metric = view["usage"]["workloads"][snapshot["workloads"][0]["id"]]
     assert metric["cpu_p99"] is None and metric["memory_p99"] is not None
     assert "Unknown CPU rate window" in view["usage"]["attribution_gaps"]
+    assert metric["memory_evidence"]["eligible"] and not metric["memory_evidence"]["partial"]
+    details = view["usage"]["attribution_gap_details"]
+    assert details and all(d["resource"] == "cpu" and d["replica"] and d["workload"] for d in details)
     store.close()
 
 
@@ -359,3 +362,67 @@ def test_retained_samples_with_changed_units_are_excluded_visibly(settings, save
     assert metric["cpu_p99"] == 2
     assert "Incompatible retained metric definition" in view["usage"]["attribution_gaps"]
     store.close()
+
+
+def test_staging_history_keeps_saved_reads_and_other_pool_writes_available_and_serializes_same_pool(
+    settings, saved, monkeypatch
+):
+    import threading
+    import zlib
+    from concurrent.futures import ThreadPoolExecutor
+
+    store = Store(settings.database)
+    first = evidenced(saved)
+    pool = first["pool"]["id"]
+    old = store.publish_snapshot(pool, first)
+    store.publish_inventory([first["pool"]], [first["pool"]["project"]], [])
+    uid = first["context"]["pods"][0]["uid"]
+    second = deepcopy(first)
+    second["metrics"]["samples"] = [p for p in second["metrics"]["samples"] if p["replica"] == uid]
+    for sample in second["metrics"]["samples"]:
+        sample["cpu"] = 9
+    third = deepcopy(first)
+    third["context"]["pods"] = [p for p in third["context"]["pods"] if p["uid"] != uid]
+    third["metrics"]["replica_evidence"].pop(uid)
+    third["metrics"]["samples"] = [p for p in third["metrics"]["samples"] if p["replica"] != uid]
+    other = deepcopy(first)
+    other["pool"]["id"] = "another-pool"
+    staging, resume = threading.Event(), threading.Event()
+    compress = zlib.compress
+
+    def slow_compression(data, *args, **kwargs):
+        if threading.current_thread().name == "staged-publication":
+            staging.set()
+            assert resume.wait(5), "test did not release staged publication"
+        return compress(data, *args, **kwargs)
+
+    monkeypatch.setattr(zlib, "compress", slow_compression)
+    results = []
+    publisher = threading.Thread(
+        name="staged-publication", target=lambda: results.append(store.publish_snapshot(pool, second))
+    )
+    publisher.start()
+    assert staging.wait(5)
+    try:
+        with ThreadPoolExecutor(max_workers=3) as workers:
+            same_pool = workers.submit(store.publish_snapshot, pool, third)
+            read = workers.submit(store.snapshot, snapshot_id=old)
+            other_pool = workers.submit(store.publish_snapshot, other["pool"]["id"], other)
+            try:
+                assert read.result(timeout=1)["id"] == old
+                assert other_pool.result(timeout=1)
+                assert store.inventory()[0]["snapshot_id"] == old
+                assert not same_pool.done()
+            finally:
+                resume.set()
+            newest = same_pool.result(timeout=5)
+        publisher.join(timeout=5)
+        assert not publisher.is_alive()
+        assert store.snapshot(pool_id=pool)["id"] == newest
+        view = json.loads(SavedViews(store).get(pool, 3, newest))
+        assert view["usage"]["workloads"][first["context"]["pods"][0]["workload"]]["cpu_p99"] == 9
+        assert store.snapshot(snapshot_id=old)["metrics"]["samples"][0]["cpu"] != 9
+    finally:
+        resume.set()
+        publisher.join(timeout=5)
+        store.close()

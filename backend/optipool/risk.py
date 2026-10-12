@@ -3,6 +3,8 @@
 import math
 from collections import defaultdict
 
+from .pods import steady_containers
+
 DEFAULT_POLICY = {
     "cpu_required": True,
     "memory_required": True,
@@ -45,12 +47,8 @@ def counter_intervals(series, boundaries, cadence):
 
 
 def pod_risk(pod, metadata, start, cutoff, pool_id, policy):
-    containers = [c["name"] for c in pod.get("spec", {}).get("containers", [])]
-    # Restartable init sidecars run throughout the Pod; one-shot init execution has no
-    # complete saved lifetime denominator and is reported as a limitation instead.
-    containers += [
-        c["name"] for c in pod.get("spec", {}).get("initContainers", []) if c.get("restartPolicy") == "Always"
-    ]
+    # One-shot init execution has no complete saved lifetime denominator.
+    containers = [c["name"] for c in steady_containers(pod.get("spec", {}))]
     created = pod.get("created")
     boundaries = [(max(start, created), cutoff)] if created is not None else []
     if "memberships" in pod:
@@ -192,6 +190,11 @@ def pod_risk(pod, metadata, start, cutoff, pool_id, policy):
             required=policy[resource + "_required"],
             reasons=reasons,
             source=metadata.get("source", "Unavailable"),
+            collection_status=metadata.get(
+                "collection_status", "saved collection" if metadata else "unavailable"
+            ),
+            collection_warnings=metadata.get("collection_warnings", metadata.get("warnings", [])),
+            retained_snapshot_ids=metadata.get("retained_snapshot_ids", []),
             cadence_seconds=cadence,
             minimum_observation_seconds=policy["minimum_observation_seconds"],
             minimum_coverage=policy["minimum_coverage"],
@@ -305,9 +308,41 @@ def retain_risk(snapshot, previous, snapshot_id):
     from copy import deepcopy
 
     metrics = snapshot["metrics"]
-    metadata = metrics.get("risk")
-    if not metadata or metadata.get("source") == "Unavailable":
-        return
+    metadata = metrics.get("risk") or {}
+    if not metadata.get("source") or metadata.get("source") == "Unavailable":
+        failed = deepcopy(metadata)
+        # Choose one saved definition, then apply the same compatibility and interval
+        # checks as fresh collection. No failed source can erase prior adverse facts.
+        retained = next(
+            (
+                candidate["metrics"]["risk"]
+                for candidate, _ in reversed(previous)
+                if candidate["metrics"].get("risk", {}).get("series")
+                and candidate["metrics"]["risk"].get("source") not in {None, "Unavailable"}
+            ),
+            None,
+        )
+        if retained is None:
+            return
+        metadata = {k: deepcopy(v) for k, v in retained.items() if k != "series"}
+        metadata.update(
+            series=[],
+            collection_status="retained after unavailable collection",
+            collection_warnings=failed.get("warnings") or ["Fresh risk evidence unavailable"],
+            failed_collection={
+                "snapshot_id": snapshot_id,
+                "source": failed.get("source", "Unavailable"),
+                "warnings": failed.get("warnings", []),
+            },
+        )
+        metadata["warnings"] = list(
+            dict.fromkeys(
+                metadata.get("warnings", [])
+                + metadata["collection_warnings"]
+                + ["Using compatible retained risk counters; fresh risk collection unavailable"]
+            )
+        )
+        metrics["risk"] = metadata
     signature = {k: metadata.get(k) for k in ["source", "cadence_seconds", "definitions"]}
     records = metrics.get("replica_evidence", {})
     beginning, end = metrics["cutoff"] - 10 * 86400, metrics["cutoff"]
@@ -367,7 +402,10 @@ def retain_risk(snapshot, previous, snapshot_id):
                         if old_origin not in value["provenance"]:
                             value["provenance"].append(old_origin)
     metadata["series"] = []
+    retained_ids = set()
     for value in saved.values():
         points = value.pop("points")
         if points:
             metadata["series"].append({**value, "values": [[t, v] for t, v in sorted(points.items())]})
+            retained_ids.update(origin for origin in value["provenance"] if origin != snapshot_id)
+    metadata["retained_snapshot_ids"] = sorted(retained_ids)

@@ -27,6 +27,15 @@ export default function RiskEvidence({
           : `${risk.minimum_observation_seconds / 3600} hours`}{" "}
         / {percent(risk?.minimum_coverage)} selected-window coverage
       </small>
+      {risk?.collection_status && <small>{risk.collection_status}</small>}
+      {(risk?.collection_warnings ?? []).map((warning) => (
+        <small key={warning}>{warning}</small>
+      ))}
+      {!!risk?.retained_snapshot_ids?.length && (
+        <small>
+          Retained snapshots: {risk.retained_snapshot_ids.join(", ")}
+        </small>
+      )}
       <small>
         Required risk evidence:{" "}
         {risk?.required === false ? "no (configured opt-out)" : "yes"}
