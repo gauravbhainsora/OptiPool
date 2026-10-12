@@ -344,6 +344,9 @@ export type ClusterSnapshot = {
 };
 
 export type Risk = {
+  cadence_seconds: number | null;
+  minimum_observation_seconds: number;
+  minimum_coverage: number;
   status: "available" | "unknown";
   source: string;
   required: boolean;

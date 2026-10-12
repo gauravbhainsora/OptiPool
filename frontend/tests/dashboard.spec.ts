@@ -525,6 +525,14 @@ test("saved metric source details show partial resources and legacy unknown quer
   page.on("request", (request) => {
     if (request.url().includes("/api/refresh/")) collectionRequests += 1;
   });
+  await page.route("**/api/snapshot?**", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.usage.cpu_rate_window_seconds = null;
+    body.usage.cpu_alignment_window_seconds = null;
+    body.usage.query_definition = null;
+    await route.fulfill({ response, json: body });
+  });
   await page.goto("/");
   await page.getByRole("tab", { name: "Workloads", exact: true }).click();
   await expect(

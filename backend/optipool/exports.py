@@ -19,6 +19,9 @@ def evidence_columns(metric):
         risk = metric.get(resource + "_risk") or {}
         for field in [
             "status",
+            "cadence_seconds",
+            "minimum_observation_seconds",
+            "minimum_coverage",
             "source",
             "numerator",
             "denominator",
@@ -47,10 +50,15 @@ def evidence_columns(metric):
             ("eligible", "reduction eligible"),
             ("partial", "evidence partial"),
         ]:
-            columns[f"{label} {title}"] = evidence.get(field)
-        columns[f"{label} evidence reasons"] = "; ".join(evidence.get("reasons", [])) or (
-            "" if evidence else "Unavailable"
-        )
+            columns[f"{label} {title}"] = (
+                bool(evidence.get("eligible") and risk.get("eligible"))
+                if field == "eligible"
+                else evidence.get(field)
+            )
+        columns[f"{label} evidence reasons"] = "; ".join(
+            evidence.get("reasons", [])
+            + ([] if risk.get("eligible") else risk.get("reasons", ["Required risk evidence unavailable"]))
+        ) or ("" if evidence else "Unavailable")
     return columns
 
 

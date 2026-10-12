@@ -62,6 +62,7 @@ def test_high_throttling_and_historical_oom_withhold_independent_reductions(sett
         response = client.get("/api/export/workloads", params=query)
         exported = next(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig"))))
         assert exported["CPU risk ratio"] == "0.2"
+        assert exported["CPU reduction eligible"] == "False"
         assert "OOM" in exported["Memory risk reasons"]
         assert collector.calls == before
 
@@ -251,3 +252,56 @@ def test_signed_iap_risk_reads_exports_and_windows_use_only_saved_data(settings,
             assert exported["Memory risk restarts"] > 0
             assert exported["CPU risk required"] is True
         assert collector.calls == before
+
+
+def test_deleted_replica_risk_remains_bounded_reproducible_and_blocks_reduction(settings):
+    from copy import deepcopy
+
+    app = create_app(settings)
+    with TestClient(app) as client:
+        pool = initialized(client)["pools"][0]
+        first = app.state.store.snapshot(pool_id=pool["id"])
+        risk_history(first, throttled=0)
+        deleted = first["context"]["pods"][0]
+        for series in first["metrics"]["risk"]["series"]:
+            if series["replica"] == deleted["uid"] and series["kind"] == "oom_events":
+                series["values"][-1][1] = 3
+        old_id = app.state.store.publish_snapshot(pool["id"], first)
+        old_query = dict(pool_id=pool["id"], snapshot_id=old_id, days=1)
+        before = client.get("/api/snapshot", params=old_query).json()
+        second = deepcopy(first)
+        second["context"]["pods"] = [p for p in second["context"]["pods"] if p["uid"] != deleted["uid"]]
+        second["workloads"][0]["pool_replicas"] -= 1
+        second["metrics"]["samples"] = [
+            s for s in second["metrics"]["samples"] if s["replica"] != deleted["uid"]
+        ]
+        second["metrics"]["replica_evidence"].pop(deleted["uid"])
+        second["metrics"]["risk"]["series"] = [
+            s for s in second["metrics"]["risk"]["series"] if s["replica"] != deleted["uid"]
+        ]
+        new_id = app.state.store.publish_snapshot(pool["id"], second)
+        query = dict(pool_id=pool["id"], snapshot_id=new_id, days=1)
+        row = client.get("/api/recommendations", params=query).json()["rows"][0]
+        assert row["memory_risk"]["oom_events"] == 3 and row["memory_risk"]["adverse"]
+        assert row["proposed"]["memory"] is None
+        new = client.get("/api/snapshot", params=query).json()
+        historical = next(p for p in new["usage"]["historical_replicas"] if p["uid"] == deleted["uid"])
+        assert historical["memory_risk"]["oom_events"] == 3
+        assert client.get("/api/snapshot", params=old_query).json() == before
+
+
+def test_zero_denominator_is_unknown_and_configured_opt_out_is_visible(settings):
+    settings.require_cpu_risk_evidence = False
+    app = create_app(settings)
+    with TestClient(app) as client:
+        pool = initialized(client)["pools"][0]
+        snapshot = app.state.store.snapshot(pool_id=pool["id"])
+        risk_history(snapshot, throttled=0, periods=0)
+        sid = app.state.store.publish_snapshot(pool["id"], snapshot)
+        row = client.get(
+            "/api/recommendations", params=dict(pool_id=pool["id"], snapshot_id=sid, days=1)
+        ).json()["rows"][0]
+        assert row["cpu_risk"]["status"] == "unknown"
+        assert row["cpu_risk"]["denominator"] == 0 and row["cpu_risk"]["ratio"] is None
+        assert row["cpu_risk"]["required"] is False and row["proposed"]["cpu"] is not None
+        assert "Optional" in " ".join(row["cpu_risk"]["reasons"])

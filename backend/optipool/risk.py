@@ -85,6 +85,7 @@ def pod_risk(pod, metadata, start, cutoff, pool_id, policy):
         invalid_cpu, invalid_memory = False, False
         cpu_present = memory_present = False
         event_present = {"oom_events": False, "restarts": False}
+        reset_counts = {"cpu": 0, "memory": 0}
         for key in identities:
             counters = {}
             for kind, series in groups.get(key, {}).items():
@@ -92,7 +93,9 @@ def pod_risk(pod, metadata, start, cutoff, pool_id, policy):
                     counter_intervals(series, boundaries, cadence) if cadence else ({}, 0, True)
                 )
                 counters[kind] = intervals
-                totals["counter_resets"] += resets
+                reset_counts["cpu" if kind in {"throttled_periods", "enforcement_periods"} else "memory"] += (
+                    resets
+                )
                 if kind in {"throttled_periods", "enforcement_periods"}:
                     invalid_cpu |= invalid
                 else:
@@ -142,10 +145,11 @@ def pod_risk(pod, metadata, start, cutoff, pool_id, policy):
                 else totals["oom_events"] > 0 or totals["restarts"] > 0
             )
             selected_totals = dict(totals)
+            selected_totals["counter_resets"] = reset_counts[resource] if present else None
             for kind in ["oom_events", "restarts"]:
-                if not event_present[kind]:
+                if resource == "cpu" or not event_present[kind]:
                     selected_totals[kind] = None
-            if not cpu_present:
+            if resource == "memory" or not cpu_present:
                 selected_totals["numerator"] = selected_totals["denominator"] = None
             details[resource].append(
                 dict(
@@ -188,8 +192,15 @@ def pod_risk(pod, metadata, start, cutoff, pool_id, policy):
             required=policy[resource + "_required"],
             reasons=reasons,
             source=metadata.get("source", "Unavailable"),
-            represented_seconds=min((p["represented_seconds"] or 0 for p in parts), default=None),
-            selected_window_coverage=min((p["selected_window_coverage"] or 0 for p in parts), default=None),
+            cadence_seconds=cadence,
+            minimum_observation_seconds=policy["minimum_observation_seconds"],
+            minimum_coverage=policy["minimum_coverage"],
+            represented_seconds=min((p["represented_seconds"] for p in parts), default=None)
+            if all(p["represented_seconds"] is not None for p in parts)
+            else None,
+            selected_window_coverage=min((p["selected_window_coverage"] for p in parts), default=None)
+            if all(p["selected_window_coverage"] is not None for p in parts)
+            else None,
             ratio=ratio if resource == "cpu" else None,
             threshold=policy["throttling_threshold"] if resource == "cpu" else None,
             containers=parts,
@@ -211,7 +222,12 @@ def attach_risk(snapshot, usage, policy=None):
         for p in snapshot.get("context", {}).get("pods", [])
         if p.get("node") in {n["name"] for n in snapshot["nodes"]}
     }
-    pods = {**observed, **snapshot["metrics"].get("replica_evidence", {})}
+    pods = dict(observed)
+    for uid, record in snapshot["metrics"].get("replica_evidence", {}).items():
+        same_identity = all(
+            observed.get(uid, {}).get(key) == record.get(key) for key in ["uid", "workload", "created"]
+        )
+        pods[uid] = {**(observed.get(uid, {}) if same_identity else {}), **record}
     members = defaultdict(list)
     for uid, pod in pods.items():
         if uid not in observed and not any(
@@ -267,11 +283,91 @@ def attach_risk(snapshot, usage, policy=None):
             risk["ratio"] = (
                 risk["numerator"] / risk["denominator"] if resource == "cpu" and risk["denominator"] else None
             )
-            risk["represented_seconds"] = min((p["represented_seconds"] or 0 for p in parts), default=None)
+            risk["represented_seconds"] = (
+                min((p["represented_seconds"] for p in parts), default=None)
+                if all(p["represented_seconds"] is not None for p in parts)
+                else None
+            )
             risk["selected_window_coverage"] = min(
                 (p["selected_window_coverage"] or 0 for p in parts), default=None
             )
             metric[resource + "_risk"] = risk
+    usage["historical_replicas"] = [
+        {"uid": uid, **metric} for uid, metric in usage["pods"].items() if metric.get("historical")
+    ]
     usage["risk_policy"] = policy
     usage["risk_warnings"] = metadata.get("warnings", [])
     return usage
+
+
+def retain_risk(snapshot, previous, snapshot_id):
+    """Embed only compatible counters for UID/pool intervals accepted by history merge."""
+    from copy import deepcopy
+
+    metrics = snapshot["metrics"]
+    metadata = metrics.get("risk")
+    if not metadata or metadata.get("source") == "Unavailable":
+        return
+    signature = {k: metadata.get(k) for k in ["source", "cadence_seconds", "definitions"]}
+    records = metrics.get("replica_evidence", {})
+    beginning, end = metrics["cutoff"] - 10 * 86400, metrics["cutoff"]
+    saved = {}
+    warnings = metadata.setdefault("warnings", [])
+    for candidate, origin in [*previous, (snapshot, snapshot_id)]:
+        evidence = candidate["metrics"].get("risk", {})
+        if {k: evidence.get(k) for k in signature} != signature:
+            if evidence.get("series"):
+                warning = "Excluded retained risk counters with incompatible source/definition/cadence"
+                if warning not in warnings:
+                    warnings.append(warning)
+            continue
+        for series in evidence.get("series", []):
+            record = records.get(series.get("replica"))
+            if not record or record.get("workload") != series.get("workload"):
+                continue
+            key = tuple(series.get(k) for k in ["replica", "workload", "container", "identity", "kind"])
+            if not all(key):
+                continue
+            value = saved.setdefault(
+                key,
+                {
+                    **{k: deepcopy(v) for k, v in series.items() if k not in {"values", "provenance"}},
+                    "points": {},
+                    "provenance": [],
+                },
+            )
+            for t, counter in series.get("values", []):
+                if (
+                    not isinstance(t, (int, float))
+                    or not isinstance(counter, (int, float))
+                    or not math.isfinite(t)
+                    or not math.isfinite(counter)
+                    or counter < 0
+                ):
+                    continue
+                if (
+                    beginning <= t <= end
+                    and t >= record["created"]
+                    and any(
+                        m.get("pool_id") == snapshot["pool"]["id"]
+                        and m.get("node")
+                        and m.get("provenance")
+                        and m["start"] <= t <= m["end"]
+                        for m in record.get("memberships", [])
+                    )
+                ):
+                    if t in value["points"] and value["points"][t] != counter:
+                        warning = (
+                            "Conflicting saved risk counter point; newest compatible observation selected"
+                        )
+                        if warning not in warnings:
+                            warnings.append(warning)
+                    value["points"][t] = counter
+                    for old_origin in series.get("provenance", []) or [origin]:
+                        if old_origin not in value["provenance"]:
+                            value["provenance"].append(old_origin)
+    metadata["series"] = []
+    for value in saved.values():
+        points = value.pop("points")
+        if points:
+            metadata["series"].append({**value, "values": [[t, v] for t, v in sorted(points.items())]})

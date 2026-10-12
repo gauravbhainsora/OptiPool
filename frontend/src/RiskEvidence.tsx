@@ -16,7 +16,17 @@ export default function RiskEvidence({
         {resource} risk evidence: {risk?.status ?? "unknown"}
         {risk?.adverse ? " · adverse" : ""}
       </strong>
-      <small>{risk?.source ?? "Unavailable"}</small>
+      <small>
+        {risk?.source ?? "Unavailable"} · risk cadence{" "}
+        {risk?.cadence_seconds ?? "unknown"} seconds
+      </small>
+      <small>
+        Risk policy minimum:{" "}
+        {risk?.minimum_observation_seconds == null
+          ? "unknown"
+          : `${risk.minimum_observation_seconds / 3600} hours`}{" "}
+        / {percent(risk?.minimum_coverage)} selected-window coverage
+      </small>
       <small>
         Required risk evidence:{" "}
         {risk?.required === false ? "no (configured opt-out)" : "yes"}
