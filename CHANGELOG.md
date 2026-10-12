@@ -6,6 +6,7 @@
 - Pool-only names in the selected-pool input and unambiguous project/location/cluster selection.
 - All node pools selection combining saved Nodes, Workloads and Pods, with per-pool provenance and snapshot-pinned CSV/Excel exports; individual-pool refresh and planning remain required.
 - Clearer non-Deployment p99 captions for SparkApplication, DaemonSet and other controller types.
+- Self-contained A–Z implementation prompt for rebuilding or continuing with another AI.
 - Approved Matt Pocock skill configuration for GitHub Issues, default triage labels and existing glossary/ADR layout.
 
 ## 0.2.0 — 12 October 2026

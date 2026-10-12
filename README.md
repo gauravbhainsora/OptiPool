@@ -10,6 +10,8 @@ See the [architecture diagram](docs/architecture.md) for collection, persistence
 
 The self-contained [architecture and build plan](docs/BUILD_PLAN.md) records requirements, implementation status, verification, release details and remaining work for sharing with another AI or engineer. Version 0.2.0 adds analytics and loading optimizations; version 0.1.0 retains its original artifacts. See the plan for publication and acceptance status.
 
+For another AI to build or extend the complete product, use the self-contained [A–Z implementation prompt](docs/IMPLEMENTATION_PROMPT.md). It includes feature contracts, architecture, implementation phases, tests and deployment/release criteria.
+
 ## Run locally
 
 Prerequisites: Python 3.13+, Node.js 22+, npm. Helm 3.17.3, Docker, kubectl and Kind 0.27.0 are needed for deployment tests.
@@ -35,7 +37,7 @@ For development with frontend hot reloading, keep the API running and use `npm -
 
 Node-pool, workload and Pod tables export **CSV and Excel**, with snapshot provenance. Workload and Pod usage exports follow the selected window and displayed snapshot. No export initiates a cloud fetch.
 
-Choose a cluster and **All node pools** to combine its saved Nodes, Workloads and individual Pods. Capture times and metric cutoffs remain explicit per pool. Cluster workload/Pod CSV and Excel exports pin the displayed snapshots. Select an individual pool for live refresh, recommendations, comparisons and capacity planning. These selection changes are currently on main and not included in the 0.2.0 release.
+Choose a cluster and **All node pools** to combine its saved Nodes, Workloads and individual Pods. Capture times and metric cutoffs remain explicit per pool. Cluster workload/Pod CSV and Excel exports pin the displayed snapshots. Select an individual pool for live refresh, recommendations, comparisons and capacity planning. These selection changes are verified in the local post-0.2.0 checkout and are not included in the 0.2.0 release.
 
 Choose **Selected node pool** before estimating. The result names the target pool, cluster and project. The planner places proposed Pods only on that pool or new nodes using its saved configuration; it does not choose another pool automatically.
 
