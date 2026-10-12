@@ -1,12 +1,19 @@
 import { useState } from "react";
 import { Search } from "lucide-react";
 import { cores, date, ExportButtons, gib } from "./components";
-import type { Snapshot } from "./types";
+import ClusterExportButtons from "./ClusterExportButtons";
+import type { ClusterSnapshot, Snapshot } from "./types";
 
-export default function PodTable({ snapshot }: { snapshot: Snapshot }) {
+export default function PodTable({
+  snapshot,
+  scope,
+}:
+  | { snapshot: Snapshot; scope?: never }
+  | { scope: ClusterSnapshot; snapshot?: never }) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
-  const filtered = (snapshot.pods ?? []).filter((p) =>
+  const days = scope?.days ?? snapshot?.usage.days ?? 3;
+  const filtered = (scope?.pods ?? snapshot?.pods ?? []).filter((p) =>
     `${p.name} ${p.namespace} ${p.workload} ${p.node}`
       .toLowerCase()
       .includes(search.toLowerCase()),
@@ -22,19 +29,24 @@ export default function PodTable({ snapshot }: { snapshot: Snapshot }) {
             Individual Pods <span className="count">{filtered.length}</span>
           </h2>
           <p>
-            Saved Pods on {snapshot.pool.name}, plus unscheduled Pods
-            constrained to this pool.
+            {scope
+              ? `Saved Pods across all node pools in ${scope.cluster}.`
+              : `Saved Pods on ${snapshot?.pool.name}, plus unscheduled Pods constrained to this pool.`}
           </p>
         </div>
-        <ExportButtons
-          table="pods"
-          query={{
-            pool_id: snapshot.pool.id,
-            snapshot_id: snapshot.id,
-            pod_search: search,
-            days: snapshot.usage.days,
-          }}
-        />
+        {scope ? (
+          <ClusterExportButtons scope={scope} table="pods" search={search} />
+        ) : (
+          <ExportButtons
+            table="pods"
+            query={{
+              pool_id: snapshot?.pool.id ?? "",
+              snapshot_id: snapshot?.id ?? "",
+              pod_search: search,
+              days,
+            }}
+          />
+        )}
       </div>
       <div className="table-toolbar">
         <div className="search">
@@ -61,6 +73,7 @@ export default function PodTable({ snapshot }: { snapshot: Snapshot }) {
               <th>Pod / namespace</th>
               <th>Owning workload</th>
               <th>Node</th>
+              {scope && <th>Node pool / snapshot</th>}
               <th>Status / restarts</th>
               <th>Requests</th>
               <th>Limits</th>
@@ -71,9 +84,9 @@ export default function PodTable({ snapshot }: { snapshot: Snapshot }) {
           </thead>
           <tbody>
             {rows.map((p) => {
-              const m = snapshot.usage.pods?.[p.uid];
+              const m = p.usage ?? snapshot?.usage.pods?.[p.uid];
               return (
-                <tr key={p.uid}>
+                <tr key={`${p.pool_id ?? snapshot?.pool.id}/${p.uid}`}>
                   <td>
                     <strong className="mono">{p.name}</strong>
                     <small>{p.namespace}</small>
@@ -82,6 +95,12 @@ export default function PodTable({ snapshot }: { snapshot: Snapshot }) {
                   <td>
                     <span className="mono">{p.node ?? "Unscheduled"}</span>
                   </td>
+                  {scope && (
+                    <td>
+                      {p.pool_name}
+                      <small>{date(p.saved_at)}</small>
+                    </td>
+                  )}
                   <td>
                     <span
                       className={`pill ${p.phase === "Running" ? "nonprod" : "production"}`}
@@ -108,7 +127,7 @@ export default function PodTable({ snapshot }: { snapshot: Snapshot }) {
                     <small>
                       {gib(m?.memory_latest)} / {gib(m?.memory_p99)}
                     </small>
-                    <small>Latest / p99 · {snapshot.usage.days} days</small>
+                    <small>Latest / p99 · {days} days</small>
                     <small>
                       CPU at {date(m?.cpu_sample_at)} · memory at{" "}
                       {date(m?.memory_sample_at)}
@@ -197,7 +216,9 @@ export default function PodTable({ snapshot }: { snapshot: Snapshot }) {
       <div className="panel-footer">
         <span>
           {filtered.length} Pods · page {activePage + 1} of {totalPages} ·
-          snapshot {snapshot.id.slice(0, 8)}
+          {scope
+            ? `${scope.sources.length} pool snapshots`
+            : `snapshot ${snapshot?.id.slice(0, 8)}`}
         </span>
         <div className="pagination">
           <button

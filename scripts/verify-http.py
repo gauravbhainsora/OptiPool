@@ -35,6 +35,29 @@ for table in ["node-pools", "workloads", "pods"]:
     assert b"Snapshot ID" in csv and len(csv) > 100
     workbook = get("/api/export/" + table + "?" + query + "&format=xlsx")
     assert zipfile.is_zipfile(io.BytesIO(workbook))
+cluster_selection = {k: pool[k] for k in ["project", "location", "cluster"]}
+scope = json.loads(get("/api/cluster-snapshot?" + urllib.parse.urlencode({**cluster_selection, "days": 10})))
+assert len(scope["sources"]) == 2 and len(scope["nodes"]) == 5 and len(scope["pods"]) == 20
+assert len(scope["workloads"]) == 4 and scope["days"] == 10
+pins = {s["pool_id"]: s["snapshot_id"] for s in scope["sources"]}
+for table in ["workloads", "pods"]:
+    for format in ["csv", "xlsx"]:
+        export_request = urllib.request.Request(
+            base + f"/api/export-cluster/{table}?format={format}",
+            data=json.dumps({**cluster_selection, "days": 10, "snapshots": pins}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(export_request, timeout=30) as response:
+            content = response.read()
+        assert len(content) > 100
+        if format == "xlsx":
+            assert zipfile.is_zipfile(io.BytesIO(content))
+        else:
+            assert all(sid.encode() in content for sid in pins.values())
+assert {p["id"]: p["snapshot_id"] for p in json.loads(get("/api/inventory"))["pools"]} == {
+    p["id"]: p["snapshot_id"] for p in inventory["pools"]
+}
 req = urllib.request.Request(
     base + "/api/estimate?" + query,
     data=json.dumps(
@@ -57,5 +80,5 @@ assert result["snapshot_id"] == snapshot["id"] and result["placements"]
 assert result["planning"]["peak_replicas"] == 8 and result["node_budgets"]
 assert json.loads(get("/api/inventory"))["pools"][0]["snapshot_id"] == pool["snapshot_id"]
 print(
-    "HTTP saved views, Pod analytics, recommendations, comparisons, exports and peak/zone scenario verified"
+    "HTTP pool/cluster saved views, pinned exports, Pod analytics, recommendations, comparisons and peak/zone scenario verified"
 )

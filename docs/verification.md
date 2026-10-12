@@ -51,3 +51,11 @@ Artifact publication does not replace the pending live acceptance below.
 - 20-user acceptance benchmark runs at twice the actual discovered inventory; large-scale refresh and simulation limits are measured.
 
 Production collection defaults to gated until this validation is recorded. No production readiness, actual billing savings or complete deleted-Pod history is inferred from demo checks. Git/image/chart publication is separate from local implementation and packaging.
+
+## Post-v0.2 source changes (unreleased)
+
+- 74 backend cases and four browser flows pass, including cluster identity, missing saved pools, independent p99 winners, mixed memory definitions, pinned CSV/XLSX after refresh and foreign snapshot rejection. The UI covers memory requests, plain pool names, All node pools, combined tables, window/export behavior, individual planning requirements and controller-type captions. Ruff, Prettier, TypeScript/Vite and Helm checks pass.
+- A 20-user synthetic run with 16 pools/40 nodes/160 Pods measured saved-view p95 0.515s, combined two-pool cluster p95 0.197s and estimates p95 0.037s. No cloud collection occurred during reads/exports/estimates. Docker lifecycle testing was running concurrently on this host. This excludes real network/IAP and actual-inventory acceptance; see benchmark-synthetic.json.
+- Approved Matt Pocock setup writes the AGENTS.md skill pointers and docs/agents configuration. Public GitHub label reads verify all five configured default labels; the existing wontfix label is retained.
+- Current-source Docker Desktop/Kind image and packaged chart installed successfully. Pool/cluster HTTP views and pinned exports, Helm hooks, restart and temporary 0.2.1-lifecycle.1 upgrade passed; exact snapshot IDs persisted. Uninstall retained the PVC and the disposable cluster was removed.
+- These changes do not replace the public 0.2.0 chart/image/tag.

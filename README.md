@@ -28,12 +28,14 @@ For development with frontend hot reloading, keep the API running and use `npm -
 
 | View | What it shows |
 |---|---|
-| Node pools | Project/cluster/pool selection, environment, machine configuration, autoscaler bounds, saved requests, policy violations, snapshot time and saved-snapshot comparisons |
+| Node pools | Project/cluster/pool selection, environment, machine configuration, autoscaler bounds, CPU/memory request totals, policy violations, snapshot time and saved-snapshot comparisons |
 | Nodes | Readiness, cordons, allocatable CPU/memory, requests, configured limits, remaining request budgets, Pod slots, labels and taints |
 | Workloads | Controller ownership, Services, replica counts, highest-replica p99 and advisory request proposals with headroom/coverage; per-Pod latest saved usage/p99, container requests/limits, conditions and available OOM evidence |
 | Capacity planner | Requests/replicas or Deployment YAML; steady/HPA/rollout envelopes, zone spread, before/after node budgets, placement explanations, growth limits and saved cost scenarios |
 
 Node-pool, workload and Pod tables export **CSV and Excel**, with snapshot provenance. Workload and Pod usage exports follow the selected window and displayed snapshot. No export initiates a cloud fetch.
+
+Choose a cluster and **All node pools** to combine its saved Nodes, Workloads and individual Pods. Capture times and metric cutoffs remain explicit per pool. Cluster workload/Pod CSV and Excel exports pin the displayed snapshots. Select an individual pool for live refresh, recommendations, comparisons and capacity planning. These selection changes are currently on main and not included in the 0.2.0 release.
 
 Choose **Selected node pool** before estimating. The result names the target pool, cluster and project. The planner places proposed Pods only on that pool or new nodes using its saved configuration; it does not choose another pool automatically.
 

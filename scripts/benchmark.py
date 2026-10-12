@@ -60,6 +60,16 @@ def main():
                 assert response.status_code == 200
                 return time.perf_counter() - started
 
+            def cluster_read(i):
+                started = time.perf_counter()
+                pool = pools[i % len(pools)]
+                response = client.get(
+                    "/api/cluster-snapshot",
+                    params={**{k: pool[k] for k in ["project", "location", "cluster"]}, "days": 10},
+                )
+                assert response.status_code == 200 and len(response.json()["sources"]) == 2
+                return time.perf_counter() - started
+
             def scenario(i):
                 started = time.perf_counter()
                 response = client.post(
@@ -72,6 +82,7 @@ def main():
 
             with ThreadPoolExecutor(max_workers=20) as workers:
                 reads = list(workers.map(cached, range(100)))
+                cluster_reads = list(workers.map(cluster_read, range(100)))
                 estimates = list(workers.map(scenario, range(40)))
             assert source.calls == 16
             report = {
@@ -83,6 +94,9 @@ def main():
                 "pods": 160,
                 "replicas_per_estimate": 6,
                 "cached_requests": len(reads),
+                "cluster_requests": len(cluster_reads),
+                "pools_per_cluster": 2,
+                "cluster_p95_seconds": percentile(cluster_reads, 0.95),
                 "estimate_requests": len(estimates),
                 "cached_p95_seconds": percentile(reads, 0.95),
                 "estimate_p95_seconds": percentile(estimates, 0.95),
@@ -92,7 +106,11 @@ def main():
             }
             Path("docs/benchmark-synthetic.json").write_text(json.dumps(report, indent=2) + "\n")
             print(json.dumps(report, indent=2))
-            assert report["cached_p95_seconds"] < 2 and report["estimate_p95_seconds"] < 10
+            assert (
+                report["cached_p95_seconds"] < 2
+                and report["cluster_p95_seconds"] < 2
+                and report["estimate_p95_seconds"] < 10
+            )
 
 
 if __name__ == "__main__":

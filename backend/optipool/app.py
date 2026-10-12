@@ -8,8 +8,11 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from .auth import Auth
+from .cluster_views import combine
+from .cluster_views import workload_rows as cluster_workload_rows
 from .comparison import compare
 from .config import load_settings
 from .demo import DemoCollector
@@ -20,6 +23,15 @@ from .store import Store
 from .views import SavedViews
 
 logger = logging.getLogger("optipool")
+
+
+class ClusterExport(BaseModel):
+    project: str
+    location: str
+    cluster: str
+    days: int = Field(default=3, ge=1, le=10)
+    snapshots: dict[str, str] = Field(max_length=2000)
+    pod_search: str = Field(default="", max_length=200)
 
 
 def create_app(settings=None, collector=None):
@@ -177,8 +189,69 @@ def create_app(settings=None, collector=None):
         return content
 
     @app.get("/api/snapshot")
-    def get_snapshot(pool_id: str, days: int = Query(3, ge=1, le=10), actor=Depends(auth)):
-        return Response(saved_view(pool_id, days), media_type="application/json")
+    def get_snapshot(
+        pool_id: str, days: int = Query(3, ge=1, le=10), snapshot_id: str | None = None, actor=Depends(auth)
+    ):
+        return Response(saved_view(pool_id, days, snapshot_id), media_type="application/json")
+
+    def cluster_values(project, location, cluster, days, pins=None):
+        pools = [
+            p
+            for p in store.inventory()
+            if (p["project"], p["location"], p["cluster"]) == (project, location, cluster)
+        ]
+        if not pools:
+            raise HTTPException(404, "Cluster not found in saved inventory")
+        allowed = {p["id"] for p in pools}
+        if pins is not None and (not pins or not set(pins) <= allowed):
+            raise HTTPException(422, "Export snapshots must belong to the selected cluster")
+        values, missing = [], []
+        for pool in pools:
+            sid = pins.get(pool["id"]) if pins is not None else pool["snapshot_id"]
+            if pins is not None and pool["id"] not in pins:
+                continue
+            if not sid:
+                missing.append(
+                    {"pool_id": pool["id"], "pool_name": pool["name"], "reason": "No saved snapshot"}
+                )
+                continue
+            values.append(json.loads(saved_view(pool["id"], days, sid)))
+            if not pool["available"]:
+                missing.append(
+                    {
+                        "pool_id": pool["id"],
+                        "pool_name": pool["name"],
+                        "reason": "Pool is unavailable; displaying its last saved observation",
+                    }
+                )
+        return values, missing
+
+    @app.get("/api/cluster-snapshot")
+    def cluster_snapshot(
+        project: str, location: str, cluster: str, days: int = Query(3, ge=1, le=10), actor=Depends(auth)
+    ):
+        values, missing = cluster_values(project, location, cluster, days)
+        return {**combine(project, location, cluster, values, missing), "days": days}
+
+    @app.post("/api/export-cluster/{table}")
+    def export_cluster(table: str, selection: ClusterExport, format: str = "csv", actor=Depends(auth)):
+        if table not in {"workloads", "pods"} or format not in {"csv", "xlsx"}:
+            raise HTTPException(422, "Choose workloads/pods and csv/xlsx")
+        values, missing = cluster_values(
+            selection.project, selection.location, selection.cluster, selection.days, selection.snapshots
+        )
+        scope = combine(selection.project, selection.location, selection.cluster, values, missing)
+        rows = (
+            cluster_workload_rows(scope)
+            if table == "workloads"
+            else [row for value in values for row in pod_rows(value, selection.pod_search, value["usage"])]
+        )
+        content, mime = render(rows, format, table)
+        return Response(
+            content,
+            media_type=mime,
+            headers={"Content-Disposition": f'attachment; filename="optipool-cluster-{table}.{format}"'},
+        )
 
     @app.get("/api/recommendations")
     def recommendations(
@@ -249,6 +322,7 @@ def create_app(settings=None, collector=None):
         pool_id: str | None = None,
         project: str | None = None,
         cluster: str | None = None,
+        location: str | None = None,
         days: int = Query(3, ge=1, le=10),
         snapshot_id: str | None = None,
         actor=Depends(auth),
@@ -260,7 +334,9 @@ def create_app(settings=None, collector=None):
             pools = [
                 p
                 for p in store.inventory()
-                if (not project or p["project"] == project) and (not cluster or p["cluster"] == cluster)
+                if (not project or p["project"] == project)
+                and (not cluster or p["cluster"] == cluster)
+                and (not location or p["location"] == location)
             ]
             rows = pool_rows(pools)
         else:

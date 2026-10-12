@@ -77,6 +77,11 @@ export type Snapshot = {
 };
 
 export type Pod = {
+  pool_id?: string;
+  pool_name?: string;
+  saved_at?: number;
+  snapshot_id?: string;
+  usage?: PodMetric | null;
   conditions: {
     type: string;
     status: string;
@@ -215,4 +220,43 @@ export type Comparison = {
     change: string;
     fields: Record<string, { before: unknown; after: unknown }>;
   }[];
+};
+
+export type ScopeSource = {
+  pool_id: string;
+  pool_name: string;
+  snapshot_id: string;
+  saved_at: number;
+  cutoff: number;
+  source: string;
+  memory_definition: string;
+  coverage: string;
+};
+export type ClusterSnapshot = {
+  project: string;
+  location: string;
+  cluster: string;
+  days: number;
+  sources: ScopeSource[];
+  missing: { pool_id: string; pool_name: string; reason: string }[];
+  nodes: (Node & ScopeSource & { environment: string })[];
+  pods: (Pod & ScopeSource)[];
+  workloads: (Pick<
+    Workload,
+    | "id"
+    | "name"
+    | "namespace"
+    | "kind"
+    | "pool_replicas"
+    | "requested"
+    | "limits"
+    | "services"
+  > & {
+    pools: (ScopeSource & { replicas: number })[];
+    cpu_p99: number | null;
+    memory_p99: number | null;
+    cpu_complete: boolean;
+    memory_complete: boolean;
+    memory_definitions: string[];
+  })[];
 };

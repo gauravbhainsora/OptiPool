@@ -12,10 +12,13 @@ The user originally described four GCP projects, then chose **dynamic discovery*
 
 ### Current work and next steps
 
-The user authorized the fixes, all suggested features, Docker Desktop cluster testing, performance improvements, committing/pushing the completed work and publishing a new release after verification. This build is complete and **v0.2.0 is published**. The user plans to continue later; use the next-session checkpoint below.
+The user authorized the fixes, all suggested features, Docker Desktop cluster testing, performance improvements, committing/pushing the completed work and publishing a new release after verification. **v0.2.0 is published**. Subsequent dashboard selection/export changes and Matt Pocock skill setup are verified locally and remain unreleased; use the next-session checkpoint below.
 
 | Work | Current status | Evidence / remaining work |
 |---|---|---|
+| Post-v0.2 dashboard updates | Verified locally, unreleased | Memory requests overview, pool-only dropdown labels, exact cluster identity, All node pools combined Nodes/Workloads/Pods and pinned CSV/XLSX; 74 backend cases and 4 browser flows |
+| Post-v0.2 Docker Desktop / Kind lifecycle | Passed locally | Current image/chart installed; pool/cluster HTTP views and pinned exports passed; restart + temporary upgrade preserved exact snapshot IDs; uninstall kept PVC and disposable cluster removed |
+| Matt Pocock repository setup | Applied and verified | Approved AGENTS.md section and three docs/agents files; all five default GitHub triage labels exist, existing wontfix retained |
 | v0.1.0 original dashboard and distribution | Released | Immutable artifacts remain available; section 10 |
 | Nullable manifest resources and CUD eligibility fixes | Verified locally and in CI | Domain, HTTP and browser cases cover null/invalid fields and Not applicable/Unavailable/valid zero quotes |
 | Request recommendations | Verified locally and in CI | Configurable headroom, sampled peak floor, actual selected-replica deltas, sparse/missing coverage and OOM/restart guards |
@@ -28,11 +31,11 @@ The user authorized the fixes, all suggested features, Docker Desktop cluster te
 | Live nonproduction/GKE acceptance | Pending operator prerequisites | Service account/access/networking, actual metrics/prices, IAP, backups and inventory-sized load |
 | v0.2.0 publication | Released and verified | Commit `f6439f3`, tag `v0.2.0`; release workflow `38169391627` and main verification `38169367740` passed; public Helm pull/release checksums and anonymous AMD64/ARM64 image manifest verified |
 
-Latest synthetic benchmark: 20 concurrent users, 16 pools, 40 nodes and 160 Pods; saved-view p95 **0.135s**, estimate p95 **0.071s**, zero cloud calls during the workload. These are fixture measurements, not live network/IAP or actual-inventory acceptance. Performance varies by load and machine; no claim of globally optimal scheduling or fastest possible collection is made.
+Latest post-v0.2 synthetic benchmark: 20 concurrent users, 16 pools, 40 nodes and 160 Pods; saved-view p95 **0.515s**, combined two-pool cluster p95 **0.197s**, estimate p95 **0.037s**, zero cloud calls during the workload. These are fixture measurements, not live network/IAP or actual-inventory acceptance. Performance varies by load and machine; no claim of globally optimal scheduling or fastest possible collection is made.
 
 ## 2. Agreed requirements and invariants
 
-1. Discover projects, GKE Standard clusters and node pools dynamically; provide optional project allowlisting and project/cluster/pool selection.
+1. Discover projects, GKE Standard clusters and node pools dynamically; provide optional project allowlisting and project/cluster/pool selection. Cluster selection uses project + location + cluster identity; the selected-pool input displays only the pool name. “All node pools” requires a specific cluster and combines saved Nodes, Workloads and Pods. It never starts bulk refresh; capacity planning requires an individual pool.
 2. Show node-pool inventory, individual nodes, controller/service-associated workloads, individual Pods and a capacity planner.
 3. Initial import saves observations once. Later dashboard reads, slider changes, exports, recommendations, comparisons and estimates use the database.
 4. **Fetch latest live data** refreshes only the selected pool. Supporting cluster context is attached to that snapshot without replacing other pools' snapshots. Inventory discovery is a separate explicit action and preserves saved observations.
@@ -79,7 +82,7 @@ The API/UI and database owner are one deployed instance. A single background col
 
 ### Frontend
 
-React 19, TypeScript strict, Vite, local fonts and Lucide icons. API serves the built UI. Tabs: Node pools, Nodes, Workloads, Capacity planner. Project/cluster filters and selected-pool control supply context. Workloads has the 1–10 day slider, workload rows and a searchable/paginated individual-Pod table. CSV/XLSX download links use saved API exports. Layout supports desktop and mobile.
+React 19, TypeScript strict, Vite, local fonts and Lucide icons. API serves the built UI. Tabs: Node pools, Nodes, Workloads, Capacity planner. Project/cluster filters and selected-pool control supply context. Workloads has the 1–10 day slider, workload rows and a searchable/paginated individual-Pod table. CSV/XLSX downloads use saved API exports. Node Pools has separate CPU and memory request percentages calculated from total saved requests divided by total allocatable resources in the filtered scope, with missing denominators shown unavailable. Layout supports desktop and mobile. The All node pools view preserves per-pool capture times, coverage and environment budgets; it does not imply simultaneous observations. Individual-pool recommendations, timelines, comparisons and capacity estimates stay scoped to that pool.
 
 ### Backend modules and seams
 
@@ -96,6 +99,7 @@ React 19, TypeScript strict, Vite, local fonts and Lucide icons. API serves the 
 - `metrics.py`: saved-window aggregation, independent highest-replica p99 and per-Pod summaries.
 - `recommendations.py`: advisory effective Pod request proposals and review guardrails (implemented).
 - `comparison.py`: same-pool immutable snapshot comparisons (implemented).
+- `cluster_views.py`: combine immutable saved pool views for an exact cluster; preserve source snapshots, group controllers and build provenance-bearing workload exports.
 - `pods.py`: selected-pool Pod rows, spec/resources and available saved status detail.
 - `pricing.py`: component costs, eligibility, missing-price status and commitment obligation.
 - `exports.py`: CSV/XLSX generation, provenance and formula safety.
@@ -121,7 +125,7 @@ SQLite schema version 1 contains `metadata`, `inventory`, `snapshots`, `snapshot
 
 Retention is 30 days, preserving the latest pool snapshot and snapshots pinned by retained estimates. SQLite backup API creates a consistent file; copying a live DB independently of WAL is not a backup. Keep off-volume backups and test restore. The new `snapshot_core` table is an additive derived projection published in the same transaction as the full snapshot; it omits metrics histories so estimation/comparison do not repeatedly parse them. Older rows fall back to the original payload; no automatic collection or destructive rewrite occurs. Added job/history indexes are also additive. Schema version remains 1; backup/restore is still required before upgrade. Older applications ignore these extra tables, but Helm rollback is not a database rollback.
 
-Existing API groups: inventory/snapshot reads; explicit inventory and pool refresh; job status; estimate/history; CSV/XLSX exports; health/readiness. New read-only routes: `/api/recommendations`, `/api/snapshots` and `/api/snapshots/compare`. Comparisons must verify both IDs belong to the selected pool. Recommendations and workload/Pod exports can pin `snapshot_id`; the UI uses this to match displayed data even if another viewer refreshes the pool. API authentication applies to new routes. Health endpoints expose no inventory.
+Existing API groups: inventory/snapshot reads; explicit inventory and pool refresh; job status; estimate/history; CSV/XLSX exports; health/readiness. New read-only routes: `/api/recommendations`, `/api/snapshots` and `/api/snapshots/compare`. Comparisons must verify both IDs belong to the selected pool. Recommendations and workload/Pod exports can pin `snapshot_id`; the UI uses this to match displayed data even if another viewer refreshes the pool. API authentication applies to new routes. Health endpoints expose no inventory. Unreleased `/api/cluster-snapshot` GET reads the latest saved IDs in one inventory query, then reuses cached individual saved views. `/api/export-cluster/{workloads|pods}` POST is read-only: JSON pins the displayed pool IDs to snapshot IDs, validates cluster/pool membership and exports CSV/XLSX without creating jobs. Node-pool exports also filter location. No new schema or collection behavior is introduced.
 
 Configuration defaults: demo/local auth, `data/optipool.db`, empty project allowlist (dynamic discovery), production environment default, min 20 samples, max 100 added nodes (configurable up to 500), max 2,000 simulated replicas, and production collection gate disabled. Hierarchy: pool override → cluster override → project override → default. Demo and live use separate databases. Peak scenario replicas must respect simulation bounds.
 
@@ -142,6 +146,12 @@ Node explanations should show before/after requests, policy ceilings, remaining 
 Public prices require reviewed exact region/machine/provisioning/disk/component SKU mappings and units. Missing complete mappings mean unavailable. No guessed percentage CUD discounts. If no components are eligible, CUD is Not applicable; if eligible commitment prices are absent, it is Unavailable. Valid zero cost is not missing data. Monthly charges use 730 hours; hypothetical eligible commitment obligation uses hourly × 24 × 365 × 3. Existing commitments, credits, negotiated rates and bills are not modeled.
 
 ## 7. New product features and acceptance details
+
+### Combined cluster observations (unreleased)
+
+Selecting All node pools combines saved node and Pod rows with pool identity and snapshot provenance. Controllers group by namespace/kind/name; selected-pool replicas and requests/limits are summed, Services unioned. Desired/running cluster totals are not summed across pool snapshots. Deployment p99 is the maximum of the per-pool highest-replica p99 independently for CPU and memory, with winner pool/replica retained in exports. The 1–10 day window ends at each pool's saved cutoff. Missing pool/metric coverage is disclosed; incompatible memory definitions withhold a combined memory p99. Observations can describe different times and may repeat a Pod that migrated between captures; this view is not a simultaneous cluster census. Exports pin displayed snapshot IDs even if a later refresh occurs. Missing snapshots do not trigger collection.
+
+Non-Deployment controller rows (for example SparkApplication and DaemonSet) display “Deployments only” with their workload kind / a pointer to individual Pod metrics. This is the agreed controller p99 scope, not evidence that Pod metrics were absent. Per-Pod metrics remain available when attributable samples were collected. Broader controller aggregation is not implemented.
 
 ### Right-sizing
 
@@ -184,7 +194,7 @@ npm --prefix frontend test
 bash scripts/kind-test.sh
 ```
 
-The browser runner uses an isolated demo DB and port 8100, tests desktop/mobile, and writes synthetic screenshots. The Kind script creates/removes only its own cluster and uses explicit contexts; local-built images must override the chart's GHCR repository. Latest synthetic benchmark used 20 concurrent users, 16 pools, 40 nodes and 160 Pods, with saved-view p95 about 0.135s and ordinary estimate p95 about 0.071s. This is not a live-inventory or network/IAP acceptance result. Target actual acceptance: 20 users at twice discovered inventory, cached views p95 <2s and ordinary estimates <10s.
+The browser runner uses an isolated demo DB and port 8100, tests desktop/mobile, and writes synthetic screenshots. The Kind script creates/removes only its own cluster and uses explicit contexts; local-built images must override the chart's GHCR repository. Latest post-v0.2 synthetic benchmark used 20 concurrent users, 16 pools, 40 nodes and 160 Pods, with saved-view p95 about 0.515s, two-pool combined cluster p95 about 0.197s and ordinary estimate p95 about 0.037s. Docker lifecycle verification was running concurrently on the host; these measurements are not directly comparable to the released v0.2 benchmark (0.135s / 0.071s). This is not a live-inventory or network/IAP acceptance result. Target actual acceptance: 20 users at twice discovered inventory, cached views p95 <2s and ordinary estimates <10s.
 
 Real acceptance must check collector IAM/RBAC, control-plane networking, actual normalization/ownership, GMP/native definitions and sample coverage, exact prices, HTTPS/IAP/audience/Workload Identity, off-volume backup/restore, and actual inventory-sized load. Keep production collection gated until results are recorded.
 
@@ -211,7 +221,11 @@ Helm uses one replica/worker, Recreate updates, nonroot user 10001, a read-only 
 
 The feature source commit is `f6439f3d9606ff0c39f092b9356fed11f5c27b6a`, on main and tagged v0.2.0. Release workflow: `https://github.com/gauravbhainsora/OptiPool/actions/runs/38169391627`. Main verification: `https://github.com/gauravbhainsora/OptiPool/actions/runs/38169367740`. Both workflows passed. The release, public chart downloads/checksums and anonymous multi-platform image manifest were verified. The final documentation checkpoint is pushed after this verification; `git log` identifies its commit separately from the immutable feature tag. The localhost:8000 preview serves v0.2.0 from the existing saved demo DB. No real credentials or observations were supplied or collected.
 
-All requested local product additions and performance changes are implemented, tested, pushed and released. No current build/publication work remains. The next engineering work needs the operator's collector identity and approved nonproduction access: real collection/attribution/pricing validation, target-sized load and refresh measurements, IAP/Workload Identity deployment and off-volume backup drills. Avoid inventing real project IDs or billing prices. Keep using synthetic fixtures until those prerequisites arrive. Consider further scheduling/search or large-inventory changes only against measured production-scale evidence, retaining conditional outcomes for unsupported behavior.
+The post-v0.2.0 checkout adds memory requests in the overview, pool-only dropdown names, exact cluster identities, combined Nodes/Workloads/Pods and pinned exports for All node pools, and clearer non-Deployment p99 captions. These changes pass 74 backend tests and four browser flows plus build/style/Helm checks. The current-source Docker/Kind chart install, HTTP cluster/export smoke, Helm hooks, restart persistence and temporary chart upgrade also pass; exact saved IDs persisted and uninstall retained the PVC before cluster cleanup. Versions and public release artifacts remain 0.2.0. Check Git status/log for their source publication checkpoint rather than assuming they are part of the v0.2.0 tag.
+
+The approved Matt Pocock setup is applied: GitHub Issues in gauravbhainsora/OptiPool; default needs-triage, needs-info, ready-for-agent, ready-for-human and wontfix labels (all verified publicly); single-context root GLOSSARY.md + docs/adr/. Existing instructions and domain docs were preserved. AGENTS.md points to docs/agents/issue-tracker.md, triage-labels.md and domain.md. Future skills such as triage/to-tickets/to-spec/domain-modeling read this configuration. These files are editable directly. Local gh CLI authentication is currently absent; signed-in GitHub browser access was used for approved label creation. Authenticate gh before future CLI issue operations; no credentials are stored in the repository.
+
+The next engineering work needs the operator's collector identity and approved nonproduction access: real collection/attribution/pricing validation, target-sized load and refresh measurements, IAP/Workload Identity deployment and off-volume backup drills. Avoid inventing real project IDs or billing prices. Keep using synthetic fixtures until those prerequisites arrive. Consider further scheduling/search or large-inventory changes only against measured production-scale evidence, retaining conditional outcomes for unsupported behavior.
 
 ## 12. Maintenance instructions for the next agent
 

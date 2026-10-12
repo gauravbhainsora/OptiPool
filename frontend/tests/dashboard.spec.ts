@@ -164,3 +164,114 @@ test("mobile layout keeps navigation and table overflow inside the page", async 
     fullPage: true,
   });
 });
+
+test("cluster-wide saved views, memory summary, exports and individual planning target", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/");
+  await expect(
+    page.getByRole("tab", { name: "Node pools 8", exact: true }),
+  ).toBeVisible();
+  const inv = await (await page.request.get("/api/inventory")).json();
+  const pool = inv.pools[0];
+  await page.getByLabel("Project", { exact: true }).selectOption(pool.project);
+  await page
+    .getByLabel("Cluster", { exact: true })
+    .selectOption(`${pool.project}/${pool.location}/${pool.cluster}`);
+  const selected = inv.pools.filter(
+    (p: { project: string; location: string; cluster: string }) =>
+      p.project === pool.project &&
+      p.location === pool.location &&
+      p.cluster === pool.cluster,
+  );
+  const requested = selected.reduce(
+    (total: number, p: { id: string }) => total + inv.summaries[p.id].memory,
+    0,
+  );
+  const allocatable = selected.reduce(
+    (total: number, p: { id: string }) =>
+      total + inv.summaries[p.id].memory_allocatable,
+    0,
+  );
+  await expect(
+    page
+      .locator(".stat")
+      .filter({ hasText: "Memory requests" })
+      .locator("strong"),
+  ).toHaveText(`${Math.round((requested / allocatable) * 100)}%`);
+  await expect(
+    page
+      .getByLabel("Selected node pool", { exact: true })
+      .locator("option")
+      .filter({ hasText: "services" }),
+  ).toHaveText("services");
+  await page
+    .getByLabel("Selected node pool", { exact: true })
+    .selectOption("__all_pools__");
+  await expect(
+    page.getByRole("button", { name: "Fetch latest live data", exact: true }),
+  ).toBeDisabled();
+  await page.getByRole("tab", { name: "Nodes", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Nodes across all node pools" }),
+  ).toBeVisible();
+  await expect(page.locator(".cluster-nodes-panel tbody tr")).toHaveCount(5);
+  await page.getByRole("tab", { name: "Workloads", exact: true }).click();
+  await expect(page.locator(".cluster-workloads-panel tbody tr")).toHaveCount(
+    4,
+  );
+  await expect(
+    page.locator(".pod-panel > .table-wrap > table > tbody > tr"),
+  ).toHaveCount(20);
+  await page.getByRole("slider", { name: "Usage lookback days" }).fill("10");
+  await expect(page.getByText("Latest / p99 · 10 days").first()).toBeVisible();
+  const download = page.waitForEvent("download");
+  await page
+    .getByRole("button", { name: "Excel", exact: true })
+    .first()
+    .click();
+  expect((await download).suggestedFilename()).toBe(
+    "optipool-cluster-workloads.xlsx",
+  );
+  await page
+    .getByRole("tab", { name: "Capacity planner", exact: true })
+    .click();
+  await expect(
+    page.getByText("Select an individual node pool to estimate capacity.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(
+    (await (await page.request.get("/api/inventory")).json()).pools.map(
+      (p: { snapshot_id: string }) => p.snapshot_id,
+    ),
+  ).toEqual(inv.pools.map((p: { snapshot_id: string }) => p.snapshot_id));
+  await page.route("**/api/snapshot?*", async (route) => {
+    const response = await route.fetch();
+    const snapshot = await response.json();
+    snapshot.workloads[0].kind = "SparkApplication";
+    await route.fulfill({ response, json: snapshot });
+  });
+  await page
+    .getByLabel("Selected node pool", { exact: true })
+    .selectOption(pool.id);
+  await page.getByRole("tab", { name: "Workloads", exact: true }).click();
+  await expect(
+    page.getByText("Workload type: SparkApplication", { exact: true }),
+  ).toBeVisible();
+  const row = page.locator("tr").filter({
+    has: page.getByText("Workload type: SparkApplication", { exact: true }),
+  });
+  await expect(
+    row.getByText("No attributable history", { exact: true }),
+  ).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth + 1,
+    ),
+  ).toBe(false);
+  expect(errors).toEqual([]);
+});

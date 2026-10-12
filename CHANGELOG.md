@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Memory requests overview beside CPU, with allocatable totals and unavailable-data handling.
+- Pool-only names in the selected-pool input and unambiguous project/location/cluster selection.
+- All node pools selection combining saved Nodes, Workloads and Pods, with per-pool provenance and snapshot-pinned CSV/Excel exports; individual-pool refresh and planning remain required.
+- Clearer non-Deployment p99 captions for SparkApplication, DaemonSet and other controller types.
+- Approved Matt Pocock skill configuration for GitHub Issues, default triage labels and existing glossary/ADR layout.
+
 ## 0.2.0 — 12 October 2026
 
 - Advisory Deployment request proposals with configurable headroom, saved coverage, sampled memory-peak floors and OOM/restart review guards.

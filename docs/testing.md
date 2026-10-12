@@ -68,3 +68,7 @@ Only delete the explicitly disposable local cluster when finished: `kind delete 
 ## Live acceptance
 
 Use the [configuration guide](configuration.md) for ADC/impersonation, project discovery and nonproduction classification. Validate complete collection of one chosen nonproduction pool, target API networking, actual monitoring source/coverage, exact SKU prices and conditional scheduling outcomes. Then benchmark 20 concurrent users at twice the actual discovered inventory; cached views/slider target p95 <2s and ordinary estimates <10s. Record series/node/Pod counts and disk/memory/refresh duration before sizing production resources. Synthetic benchmarks are supporting evidence only.
+
+## Combined cluster views
+
+The post-v0.2 changes pass 74 backend cases and four browser flows. Cluster cases cover exact project/location/cluster scope, missing snapshots, independently selected p99 winners, mixed memory definitions, pinned exports after a later refresh, foreign snapshot rejection and no collection on read/export. Browser coverage checks the CPU/memory overview, plain pool names, combined node/controller/Pod counts, lookback, Excel, individual planning requirements, non-Deployment captions and mobile overflow. The Docker HTTP smoke also reads cluster views and validates pinned CSV/Excel exports without changing any pool's saved ID.

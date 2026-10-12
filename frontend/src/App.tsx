@@ -6,6 +6,7 @@ import {
   CircleHelp,
   Database,
   Layers3,
+  MemoryStick,
   LayoutGrid,
   RefreshCw,
   Server,
@@ -28,7 +29,8 @@ import Estimator from "./Estimator";
 import PodTable from "./PodTable";
 import RightSizing from "./RightSizing";
 import SnapshotCompare from "./SnapshotCompare";
-import type { Job, Pool, Snapshot, Workload } from "./types";
+import ClusterView from "./ClusterView";
+import type { ClusterSnapshot, Job, Pool, Snapshot, Workload } from "./types";
 
 type Inventory = {
   discovery_job: Job | null;
@@ -71,6 +73,8 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [days]);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [clusterSnapshot, setClusterSnapshot] =
+    useState<ClusterSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [job, setJob] = useState<Job | null>(null);
@@ -96,10 +100,30 @@ export default function App() {
     }, 2000);
     return () => clearInterval(timer);
   }, [inventory?.initialized, inventory?.discovery_job?.state, loadInventory]);
+  const clusters = [
+    ...new Map(
+      (inventory?.pools ?? [])
+        .filter((p) => project === "all" || p.project === project)
+        .map((p) => [
+          `${p.project}/${p.location}/${p.cluster}`,
+          {
+            id: `${p.project}/${p.location}/${p.cluster}`,
+            project: p.project,
+            location: p.location,
+            name: p.cluster,
+          },
+        ]),
+    ).values(),
+  ];
+  const selectedCluster = clusters.find((c) => c.id === cluster);
+  const allPoolsSelected = poolId === "__all_pools__";
   const pools = (inventory?.pools ?? []).filter(
     (p) =>
       (project === "all" || p.project === project) &&
-      (cluster === "all" || p.cluster === cluster),
+      (cluster === "all" ||
+        (p.project === selectedCluster?.project &&
+          p.location === selectedCluster.location &&
+          p.cluster === selectedCluster.name)),
   );
   const filtered = pools.filter((p) =>
     `${p.name} ${p.project} ${p.cluster}`
@@ -107,6 +131,7 @@ export default function App() {
       .includes(search.toLowerCase()),
   );
   useEffect(() => {
+    if (allPoolsSelected && selectedCluster && pools.length) return;
     if (inventory && !pools.some((p) => p.id === poolId))
       setPoolId(pools[0]?.id ?? "");
   }, [inventory, project, cluster, poolId]);
@@ -115,6 +140,31 @@ export default function App() {
     if (!poolId) return;
     const controller = new AbortController();
     setLoading(true);
+    if (allPoolsSelected && selectedCluster) {
+      setSnapshot(null);
+      setClusterSnapshot((previous) =>
+        previous?.project === selectedCluster.project &&
+        previous.location === selectedCluster.location &&
+        previous.cluster === selectedCluster.name
+          ? previous
+          : null,
+      );
+      setError("");
+      api<ClusterSnapshot>(
+        `/cluster-snapshot?${params({ project: selectedCluster.project, location: selectedCluster.location, cluster: selectedCluster.name, days: loadedDays })}`,
+        undefined,
+        controller.signal,
+      )
+        .then(setClusterSnapshot)
+        .catch((e) => {
+          if (e.name !== "AbortError") setError(e.message);
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLoading(false);
+        });
+      return () => controller.abort();
+    }
+    setClusterSnapshot(null);
     setSnapshot((previous) => (previous?.pool.id === poolId ? previous : null));
     setError("");
     api<Snapshot>(
@@ -130,7 +180,7 @@ export default function App() {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [poolId, loadedDays, generation]);
+  }, [poolId, loadedDays, generation, cluster]);
   useEffect(() => {
     if (!job || !["queued", "running"].includes(job.state)) return;
     const timer = setTimeout(async () => {
@@ -171,16 +221,33 @@ export default function App() {
         nodes: v.nodes + (s?.node_count ?? 0),
         cpu: v.cpu + (s?.cpu ?? 0),
         alloc: v.alloc + (s?.cpu_allocatable ?? 0),
+        memory: v.memory + (s?.memory ?? 0),
+        memoryAlloc: v.memoryAlloc + (s?.memory_allocatable ?? 0),
         violations: v.violations + (s?.violations ?? 0),
         saved: v.saved + Number(!!p.snapshot_id),
       };
     },
-    { nodes: 0, cpu: 0, alloc: 0, violations: 0, saved: 0 },
+    {
+      nodes: 0,
+      cpu: 0,
+      alloc: 0,
+      memory: 0,
+      memoryAlloc: 0,
+      violations: 0,
+      saved: 0,
+    },
   );
   const threshold = snapshot?.pool.environment === "production" ? 0.8 : 0.9;
   const exportQuery = {
-    ...(project !== "all" ? { project } : {}),
-    ...(cluster !== "all" ? { cluster } : {}),
+    ...(selectedCluster
+      ? {
+          project: selectedCluster.project,
+          cluster: selectedCluster.name,
+          location: selectedCluster.location,
+        }
+      : project !== "all"
+        ? { project }
+        : {}),
   };
   return (
     <div className="app-shell">
@@ -295,6 +362,7 @@ export default function App() {
             <label>
               Project
               <select
+                aria-label="Project"
                 value={project}
                 onChange={(e) => {
                   setProject(e.target.value);
@@ -312,30 +380,34 @@ export default function App() {
             <label>
               Cluster
               <select
+                aria-label="Cluster"
                 value={cluster}
                 onChange={(e) => setCluster(e.target.value)}
               >
                 <option value="all">All clusters</option>
-                {[
-                  ...new Set(
-                    inventory?.pools
-                      .filter((p) => project === "all" || p.project === project)
-                      .map((p) => p.cluster),
-                  ),
-                ].map((c) => (
-                  <option key={c}>{c}</option>
+                {clusters.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                    {project === "all"
+                      ? ` · ${c.project} · ${c.location}`
+                      : ` · ${c.location}`}
+                  </option>
                 ))}
               </select>
             </label>
             <label>
               Selected node pool
               <select
+                aria-label="Selected node pool"
                 value={poolId}
                 onChange={(e) => setPoolId(e.target.value)}
               >
+                <option value="__all_pools__" disabled={!selectedCluster}>
+                  All node pools
+                </option>
                 {pools.map((p) => (
                   <option value={p.id} key={p.id}>
-                    {p.cluster} / {p.name}
+                    {p.name}
                   </option>
                 ))}
               </select>
@@ -343,7 +415,9 @@ export default function App() {
             <div className="filter-actions">
               <span className="saved-at">
                 <Database size={14} />
-                Snapshot: {date(snapshot?.saved_at)}
+                {allPoolsSelected
+                  ? `Snapshots: ${clusterSnapshot?.sources.length ?? 0} saved pools`
+                  : `Snapshot: ${date(snapshot?.saved_at)}`}
               </span>
               <button
                 className="button primary"
@@ -355,6 +429,12 @@ export default function App() {
               </button>
             </div>
           </div>
+          {allPoolsSelected && (
+            <p className="help-note">
+              All node pools in this cluster are selected. Choose an individual
+              pool to fetch live data or estimate capacity.
+            </p>
+          )}
           {job && (
             <div className={`job-status ${job.state}`} role="status">
               Refresh {job.state}
@@ -421,6 +501,20 @@ export default function App() {
                   icon={Activity}
                 />
                 <Stat
+                  label="Memory requests"
+                  value={
+                    aggregate.memoryAlloc
+                      ? `${((aggregate.memory / aggregate.memoryAlloc) * 100).toFixed(0)}%`
+                      : "—"
+                  }
+                  note={
+                    aggregate.memoryAlloc
+                      ? `${gib(aggregate.memory)} of ${gib(aggregate.memoryAlloc)} allocatable`
+                      : "No saved allocatable memory"
+                  }
+                  icon={MemoryStick}
+                />
+                <Stat
                   label="Policy violations"
                   value={String(aggregate.violations)}
                   note="Nodes above their request ceiling"
@@ -475,7 +569,11 @@ export default function App() {
                         return (
                           <tr
                             key={p.id}
-                            className={p.id === poolId ? "selected" : ""}
+                            className={
+                              p.id === poolId || allPoolsSelected
+                                ? "selected"
+                                : ""
+                            }
                           >
                             <td>
                               <button
@@ -593,6 +691,25 @@ export default function App() {
                 </Notice>
               ))}
             </>
+          ) : allPoolsSelected ? (
+            tab === "estimator" ? (
+              <div className="panel empty">
+                Select an individual node pool to estimate capacity.
+              </div>
+            ) : loading && !clusterSnapshot ? (
+              <div className="empty">Loading saved cluster snapshots…</div>
+            ) : clusterSnapshot ? (
+              <ClusterView
+                scope={clusterSnapshot}
+                tab={tab}
+                days={days}
+                setDays={setDays}
+              />
+            ) : (
+              <div className="panel empty">
+                Select a cluster to view all of its node pools.
+              </div>
+            )
           ) : loading && !snapshot ? (
             <div className="empty">Loading saved snapshot…</div>
           ) : !snapshot ? (
@@ -867,9 +984,11 @@ function Workloads({
                         ? cores(m?.cpu_p99)
                         : "Deployments only"}
                       <small>
-                        {m
-                          ? `${m.replicas_observed} replicas observed`
-                          : "No attributable history"}
+                        {w.kind !== "Deployment"
+                          ? `Workload type: ${w.kind}`
+                          : m
+                            ? `${m.replicas_observed} replicas observed`
+                            : "No attributable history"}
                       </small>
                     </td>
                     <td title={m?.memory_replica ?? undefined}>
@@ -877,9 +996,11 @@ function Workloads({
                         ? gib(m?.memory_p99)
                         : "Deployments only"}
                       <small>
-                        {m
-                          ? `${m.samples.toLocaleString()} samples`
-                          : `Minimum ${snapshot.usage.minimum_samples} samples`}
+                        {w.kind !== "Deployment"
+                          ? "Inspect individual Pod metrics below"
+                          : m
+                            ? `${m.samples.toLocaleString()} samples`
+                            : `Minimum ${snapshot.usage.minimum_samples} samples`}
                       </small>
                     </td>
                     <td>

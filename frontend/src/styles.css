@@ -480,7 +480,7 @@ select {
 }
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 25px;
 }
@@ -1166,6 +1166,7 @@ td small {
   }
   .stats-grid {
     gap: 10px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   .stat {
     padding: 16px;
