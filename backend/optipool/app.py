@@ -50,7 +50,13 @@ def create_app(settings=None, collector=None):
     # Live ADC is loaded inside the first collection job, so cached viewing survives credential outages.
     state = {"collector": collector or (DemoCollector(settings) if settings.mode == "demo" else None)}
     auth = Auth(settings)
-    views = SavedViews(store, settings.min_metric_samples)
+    views = SavedViews(
+        store,
+        settings.min_metric_samples,
+        minimum_observation_seconds=settings.min_reduction_observation_seconds,
+        minimum_coverage=settings.min_reduction_coverage,
+        risk_policy=settings.risk_policy(),
+    )
 
     def source():
         if state["collector"] is None:

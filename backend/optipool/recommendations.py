@@ -14,7 +14,7 @@ def recommend(snapshot, usage, headroom=20):
         members = [p for p in pods if p["workload"] == workload["id"]]
         metrics = usage["workloads"].get(workload["id"], {})
         warnings = list(usage["warnings"])
-        warnings.append("CPU throttling history is not collected; inspect it before reducing CPU requests")
+        warnings.extend(usage.get("risk_warnings", []))
         if len({(p["requested"]["cpu"], p["requested"]["memory"]) for p in members}) > 1:
             warnings.append(
                 "Replicas have different effective requests; proposal requires per-template review"
@@ -30,12 +30,26 @@ def recommend(snapshot, usage, headroom=20):
             )
         current, proposed = workload["per_replica"], {}
         recovered = {}
+        reduction_eligible, reduction_reasons = {}, {}
         for key, step in [("cpu", 0.01), ("memory", 16 * 1024**2)]:
+            evidence = metrics.get(key + "_evidence", {})
+            reduction_eligible[key] = evidence.get("eligible", False)
+            reduction_reasons[key] = list(evidence.get("reasons", ["Sampling evidence unavailable"]))
+            risk = metrics.get(key + "_risk", {})
+            if key == "memory" and (oom or any(p["restarts"] for p in members)):
+                reduction_eligible[key] = False
+                reduction_reasons[key].append(
+                    "Captured OOM/restart evidence prevents memory reductions; current/last state is not complete history"
+                )
+            reduction_eligible[key] &= risk.get("eligible", False)
+            if not risk.get("eligible", False):
+                reduction_reasons[key].extend(risk.get("reasons", ["Required risk evidence unavailable"]))
             p99 = metrics.get(key + "_p99")
             value = p99
             if key == "memory" and p99 is not None:
                 value = max(
-                    [p99] + [usage["pods"].get(p["uid"], {}).get("memory_peak") or 0 for p in members]
+                    [p99, metrics.get("memory_peak") or 0]
+                    + [usage["pods"].get(p["uid"], {}).get("memory_peak") or 0 for p in members]
                 )
             proposed[key] = (
                 max(step, math.ceil(value * (1 + headroom / 100) / step) * step)
@@ -44,6 +58,13 @@ def recommend(snapshot, usage, headroom=20):
             )
             if key == "memory" and proposed[key] is not None and (oom or any(p["restarts"] for p in members)):
                 proposed[key] = max([current[key], proposed[key]] + [p["requested"][key] for p in members])
+            if (
+                proposed[key] is not None
+                and any(proposed[key] < p["requested"][key] for p in members)
+                and not reduction_eligible[key]
+            ):
+                proposed[key] = None
+                warnings.append(f"{key.upper()} reduction withheld: " + "; ".join(reduction_reasons[key]))
             recovered[key] = (
                 sum(p["requested"][key] for p in members) - proposed[key] * len(members)
                 if proposed[key] is not None
@@ -67,6 +88,12 @@ def recommend(snapshot, usage, headroom=20):
                 "cpu_p99": metrics.get("cpu_p99"),
                 "memory_p99": metrics.get("memory_p99"),
                 "coverage": coverage,
+                "cpu_evidence": metrics.get("cpu_evidence"),
+                "memory_evidence": metrics.get("memory_evidence"),
+                "cpu_risk": metrics.get("cpu_risk"),
+                "memory_risk": metrics.get("memory_risk"),
+                "reduction_eligible": reduction_eligible,
+                "reduction_reasons": reduction_reasons,
                 "pool_replicas": workload["pool_replicas"],
                 "status": "Insufficient data" if None in proposed.values() else "Review required",
                 "warnings": list(dict.fromkeys(warnings)),

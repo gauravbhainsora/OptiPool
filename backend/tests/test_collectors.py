@@ -349,3 +349,321 @@ def test_metric_query_batches_bound_names_and_encoded_length():
         len(batch) <= 100 and len(quote(json.dumps("|".join(re.escape(n) for n in batch)), safe="")) <= 3000
         for batch in batches
     )
+
+
+def test_invalid_gmp_parsing_and_empty_native_publish_unavailable(saved, settings):
+    collector = object.__new__(CloudCollector)
+    collector.settings = settings
+    pod = saved["context"]["pods"][0]
+    collector.get = lambda *args, **kwargs: {
+        "status": "success",
+        "data": {
+            "result": [
+                {
+                    "metric": {"namespace": pod["namespace"], "pod": pod["name"]},
+                    "values": [[saved["metrics"]["cutoff"], "0.2"], [saved["metrics"]["cutoff"], "broken"]],
+                }
+            ]
+        },
+    }
+    collector.pages = lambda *args, **kwargs: []
+    result = collector.metrics(saved["pool"], saved)
+    assert result["source"] == "Unavailable"
+    assert result["samples"] == []
+    assert result["resource_status"] == {"cpu": "unavailable", "memory": "unavailable"}
+    assert "GMP" in result["fallback_reason"]
+
+
+def test_partial_gmp_survives_failed_native_without_source_mixing(saved, settings):
+    collector = object.__new__(CloudCollector)
+    collector.settings = settings
+    pod = saved["context"]["pods"][0]
+    t = saved["metrics"]["cutoff"]
+    collector.get = lambda url, params: {
+        "status": "success",
+        "data": {
+            "result": []
+            if "working_set" in params["query"]
+            else [
+                {
+                    "metric": {"namespace": pod["namespace"], "pod": pod["name"]},
+                    "values": [[t, "0.2"]],
+                }
+            ]
+        },
+    }
+
+    def native(url, field, params):
+        if "memory/used_bytes" in params["filter"]:
+            raise ValueError("memory batch failed")
+        return [
+            {
+                "resource": {
+                    "type": "k8s_container",
+                    "labels": {
+                        "project_id": saved["pool"]["project"],
+                        "location": saved["pool"]["location"],
+                        "cluster_name": saved["pool"]["cluster"],
+                        "namespace_name": pod["namespace"],
+                        "pod_name": pod["name"],
+                        "container_name": pod["spec"]["containers"][0]["name"],
+                    },
+                },
+                "metric": {
+                    "type": "kubernetes.io/container/"
+                    + ("cpu/core_usage_time" if "cpu/" in params["filter"] else "memory/used_bytes"),
+                    "labels": {"memory_type": "non-evictable"},
+                },
+                "points": [{"interval": {"endTime": "2024-10-04T00:00:00Z"}, "value": {"doubleValue": 99}}],
+            }
+        ]
+
+    collector.pages = native
+    result = collector.metrics(saved["pool"], saved)
+    assert result["source"] == "GMP cAdvisor"
+    assert result["samples"][0]["cpu"] == 0.2
+    assert result["resource_status"] == {"cpu": "available", "memory": "unavailable"}
+    assert result["cpu_rate_window_seconds"] == 300
+    assert result["units"] == {"cpu": "cores", "memory": "bytes"}
+    assert any("Native metrics unavailable" in w for w in result["warnings"])
+
+
+@pytest.mark.parametrize("failure", ["batch", "response", "parse"])
+def test_failed_gmp_candidate_never_leaks_into_native(saved, settings, failure):
+    import time
+
+    collector = object.__new__(CloudCollector)
+    collector.settings = settings
+    pod = saved["context"]["pods"][0]
+    pod["created"] = time.time() - 1000
+    t = int(time.time())
+
+    def gmp(url, params):
+        if "working_set" in params["query"]:
+            if failure == "batch":
+                raise ValueError("batch failed")
+            if failure == "response":
+                return {"status": "success", "data": {"result": {}}}
+            values = [[t, "123"], [t, "broken"]]
+        else:
+            values = [[t, "999"]]
+        return {
+            "status": "success",
+            "data": {
+                "result": [{"metric": {"namespace": pod["namespace"], "pod": pod["name"]}, "values": values}]
+            },
+        }
+
+    collector.get = gmp
+
+    def native(url, field, params):
+        return [
+            {
+                "resource": {
+                    "type": "k8s_container",
+                    "labels": {
+                        "project_id": saved["pool"]["project"],
+                        "location": saved["pool"]["location"],
+                        "cluster_name": saved["pool"]["cluster"],
+                        "namespace_name": pod["namespace"],
+                        "pod_name": pod["name"],
+                        "container_name": pod["spec"]["containers"][0]["name"],
+                    },
+                },
+                "metric": {
+                    "type": "kubernetes.io/container/"
+                    + ("cpu/core_usage_time" if "cpu/" in params["filter"] else "memory/used_bytes"),
+                    "labels": {"memory_type": "non-evictable"},
+                },
+                "points": [
+                    {
+                        "interval": {
+                            "endTime": __import__("datetime")
+                            .datetime.fromtimestamp(t, __import__("datetime").UTC)
+                            .isoformat()
+                        },
+                        "value": {"doubleValue": 0.5 if "cpu/" in params["filter"] else 4096},
+                    }
+                ],
+            }
+        ]
+
+    collector.pages = native
+    result = collector.metrics(saved["pool"], saved)
+    assert result["source"] == "Native GKE Cloud Monitoring"
+    assert result["samples"][0]["cpu"] == 0.5
+    assert result["samples"][0]["memory"] == 4096
+    assert result["samples"][0]["memory_definition"] == "Non-evictable memory"
+    assert result["cpu_alignment_window_seconds"] == 300
+
+
+def test_finer_gmp_cadence_keeps_five_minute_cpu_rate(saved, settings):
+    import time
+
+    settings.metric_cadence_seconds = 60
+    collector = object.__new__(CloudCollector)
+    collector.settings = settings
+    pod = saved["context"]["pods"][0]
+    pod["created"] = time.time() - 1000
+    requests = []
+
+    def gmp(url, params):
+        requests.append(params)
+        return {
+            "status": "success",
+            "data": {
+                "result": [
+                    {
+                        "metric": {"namespace": pod["namespace"], "pod": pod["name"]},
+                        "values": [[int(time.time()), "1"]],
+                    }
+                ]
+            },
+        }
+
+    collector.get = gmp
+    result = collector.metrics(saved["pool"], saved)
+    assert all(p["step"] == 60 for p in requests)
+    assert any("sum by(namespace,pod)(rate(" in p["query"] and "[5m]" in p["query"] for p in requests)
+    assert result["cadence_seconds"] == 60
+    assert result["cpu_rate_window_seconds"] == 300
+    assert result["cpu_alignment_window_seconds"] is None
+
+
+@pytest.mark.parametrize("cadence", [60, 300])
+def test_native_alignment_records_actual_cpu_window(saved, settings, cadence):
+    import datetime
+    import time
+
+    settings.metric_cadence_seconds = cadence
+    collector = object.__new__(CloudCollector)
+    collector.settings = settings
+    pod = saved["context"]["pods"][0]
+    pod["created"] = time.time() - 1000
+    requests = []
+    collector.get = lambda *args: {"status": "success", "data": {"result": []}}
+
+    def native(url, field, params):
+        requests.append(params)
+        return [
+            {
+                "resource": {
+                    "type": "k8s_container",
+                    "labels": {
+                        "project_id": saved["pool"]["project"],
+                        "location": saved["pool"]["location"],
+                        "cluster_name": saved["pool"]["cluster"],
+                        "namespace_name": pod["namespace"],
+                        "pod_name": pod["name"],
+                        "container_name": pod["spec"]["containers"][0]["name"],
+                    },
+                },
+                "metric": {
+                    "type": "kubernetes.io/container/"
+                    + ("cpu/core_usage_time" if "cpu/" in params["filter"] else "memory/used_bytes"),
+                    "labels": {"memory_type": "non-evictable"},
+                },
+                "points": [
+                    {
+                        "interval": {
+                            "endTime": datetime.datetime.fromtimestamp(
+                                int(time.time()), datetime.UTC
+                            ).isoformat()
+                        },
+                        "value": {"doubleValue": 1},
+                    }
+                ],
+            }
+        ]
+
+    collector.pages = native
+    result = collector.metrics(saved["pool"], saved)
+    assert {p["aggregation.alignmentPeriod"] for p in requests} == {f"{cadence}s"}
+    assert result["cadence_seconds"] == cadence
+    assert result["cpu_rate_window_seconds"] == cadence
+    assert result["cpu_alignment_window_seconds"] == cadence
+
+
+def test_metric_cadence_configuration_rejects_unsupported_values():
+    from optipool.config import Settings
+    from pydantic import ValidationError
+
+    assert Settings().metric_cadence_seconds == 300
+    for cadence in [0, 30, 120, "invalid"]:
+        with pytest.raises(ValidationError):
+            Settings(metric_cadence_seconds=cadence)
+
+
+@pytest.mark.parametrize(
+    "foreign", ["project", "location", "cluster", "type", "container", "uid", "metric", "memory"]
+)
+def test_native_fallback_excludes_foreign_same_name_series(saved, settings, foreign):
+    import datetime
+    import time
+
+    collector = object.__new__(CloudCollector)
+    collector.settings = settings
+    pod = saved["context"]["pods"][0]
+    pod["created"] = time.time() - 1000
+    collector.get = lambda *args: {"status": "success", "data": {"result": []}}
+    requests = []
+
+    def native(url, field, params):
+        requests.append(params)
+        cpu = "cpu/" in params["filter"]
+        selected = {
+            "resource": {
+                "type": "k8s_container",
+                "labels": {
+                    "project_id": saved["pool"]["project"],
+                    "location": saved["pool"]["location"],
+                    "cluster_name": saved["pool"]["cluster"],
+                    "namespace_name": pod["namespace"],
+                    "pod_name": pod["name"],
+                    "container_name": pod["spec"]["containers"][0]["name"],
+                },
+            },
+            "metric": {
+                "type": "kubernetes.io/container/" + ("cpu/core_usage_time" if cpu else "memory/used_bytes"),
+                "labels": {} if cpu else {"memory_type": "non-evictable"},
+            },
+            "points": [
+                {
+                    "interval": {
+                        "endTime": datetime.datetime.fromtimestamp(int(time.time()), datetime.UTC).isoformat()
+                    },
+                    "value": {"doubleValue": 1},
+                }
+            ],
+        }
+        invalid = deepcopy(selected)
+        invalid["points"][0]["value"]["doubleValue"] = 9
+        target = {
+            "project": "project_id",
+            "location": "location",
+            "cluster": "cluster_name",
+            "container": "container_name",
+        }
+        if foreign in target:
+            invalid["resource"]["labels"][target[foreign]] = "foreign"
+        elif foreign == "type":
+            invalid["resource"]["type"] = "k8s_pod"
+        elif foreign == "uid":
+            invalid["resource"]["labels"]["pod_uid"] = "foreign-lifetime"
+        elif foreign == "metric":
+            invalid["metric"]["type"] = "wrong.metric"
+        else:
+            invalid["metric"]["labels"]["memory_type"] = "evictable"
+            if cpu:
+                return [selected]
+        return [selected, invalid]
+
+    collector.pages = native
+    result = collector.metrics(saved["pool"], saved)
+    assert result["source"] == "Native GKE Cloud Monitoring"
+    assert result["samples"][0]["cpu"] == 1 and result["samples"][0]["memory"] == 1
+    assert all(
+        'resource.type="k8s_container"' in p["filter"]
+        and f'resource.labels.project_id="{saved["pool"]["project"]}"' in p["filter"]
+        for p in requests
+    )

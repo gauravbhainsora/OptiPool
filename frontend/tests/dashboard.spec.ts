@@ -41,7 +41,10 @@ test("saved inventory, workload window, Pods, Excel export and named pool assess
     .first()
     .click();
   await expect(
-    page.getByText("CPU throttling history is not collected.").first(),
+    page
+      .locator(".pod-panel")
+      .getByText(/Throttled periods:/)
+      .first(),
   ).toBeVisible();
   await page
     .getByRole("tab", { name: "Capacity planner", exact: true })
@@ -469,4 +472,187 @@ test("new node pool design compares saved profiles, downloads and restores histo
     after.pools.map((p: { snapshot_id: string }) => p.snapshot_id),
   ).toEqual(before.pools.map((p: { snapshot_id: string }) => p.snapshot_id));
   expect(errors).toEqual([]);
+});
+
+test("saved workload and Pod evidence explains independent reduction policy", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Workloads", exact: true }).click();
+  await page
+    .locator(".pod-panel")
+    .getByText("Pod details", { exact: true })
+    .first()
+    .click();
+  await expect(
+    page
+      .locator(".pod-panel")
+      .getByText(/Selected-window coverage/)
+      .first(),
+  ).toBeVisible();
+  await expect(
+    page
+      .locator(".pod-panel")
+      .getByText(/Pod-lifetime coverage/)
+      .first(),
+  ).toBeVisible();
+  await expect(
+    page
+      .locator(".pod-panel")
+      .getByText(/Represented duration/)
+      .first(),
+  ).toBeVisible();
+  await expect(page.getByText(/Reduction policy: at least 20/)).toBeVisible();
+  await page.getByRole("slider", { name: "Usage lookback days" }).fill("10");
+  await expect(page.getByText("10-day window", { exact: true })).toBeVisible();
+  await page
+    .locator(".analytical-panel")
+    .getByText("Evidence and limits", { exact: true })
+    .first()
+    .click();
+  await expect(
+    page
+      .locator(".analytical-panel")
+      .getByText(/Selected-window coverage/)
+      .first(),
+  ).toBeVisible();
+});
+
+test("saved metric source details show partial resources and legacy unknown query fields", async ({
+  page,
+}) => {
+  let collectionRequests = 0;
+  page.on("request", (request) => {
+    if (request.url().includes("/api/refresh/")) collectionRequests += 1;
+  });
+  await page.route("**/api/snapshot?**", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.usage.cpu_rate_window_seconds = null;
+    body.usage.cpu_alignment_window_seconds = null;
+    body.usage.query_definition = null;
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Workloads", exact: true }).click();
+  await expect(
+    page.getByText("CPU rate window: Unknown", { exact: false }),
+  ).toBeVisible();
+  await page.route("**/api/snapshot?**", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.usage = {
+      ...body.usage,
+      workloads: Object.fromEntries(
+        Object.entries(body.usage.workloads).map(([key, value]) => [
+          key,
+          { ...(value as object), memory_peak: 4 * 1024 ** 3 },
+        ]),
+      ),
+      pods: Object.fromEntries(
+        Object.entries(body.usage.pods).map(([key, value]) => [
+          key,
+          { ...(value as object), memory_peak: 4 * 1024 ** 3 },
+        ]),
+      ),
+      source: "GMP cAdvisor",
+      memory_definition: "Working set",
+      cadence_seconds: 60,
+      cpu_rate_window_seconds: 300,
+      resource_status: { cpu: "available", memory: "unavailable" },
+      units: { cpu: "cores", memory: "bytes" },
+      query_definition: {
+        cpu_metric: "container_cpu_usage_seconds_total",
+        memory_metric: "container_memory_working_set_bytes",
+        cpu_aggregation: "sum containers after rate[5m]",
+        memory_aggregation: "sum container samples",
+      },
+      fallback_reason: "Native unavailable; selected GMP partial observations",
+    };
+    await route.fulfill({ response, json: body });
+  });
+  await page.getByRole("slider", { name: "Usage lookback days" }).fill("5");
+  await expect(
+    page.getByText("Source: GMP cAdvisor", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Memory observations: unavailable", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("CPU rate window: 300s", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Native unavailable; selected GMP partial observations", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("columnheader", {
+      name: "Sampled memory peak",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("cell", {
+        name: "4.00 GiB Highest observed replica sample",
+        exact: true,
+      })
+      .first(),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Sampled peak: 4.00 GiB", { exact: false }).first(),
+  ).toBeVisible();
+  await page.getByText("Saved query definitions", { exact: true }).click();
+  await expect(
+    page.getByText("container_memory_working_set_bytes", { exact: false }),
+  ).toBeVisible();
+  expect(collectionRequests).toBe(0);
+});
+
+test("saved risk evidence is visible for workloads, Pods, recommendations and exports", async ({
+  page,
+}) => {
+  let collections = 0;
+  page.on("request", (r) => {
+    if (r.method() === "POST" && /\/api\/(refresh|initialize)/.test(r.url()))
+      collections++;
+  });
+  await page.goto("/");
+  await expect(
+    page.getByRole("tab", { name: "Node pools 8", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("tab", { name: /^Workloads/ }).click();
+  await page.getByText("CPU evidence", { exact: true }).first().click();
+  await expect(
+    page
+      .getByText("Synthetic risk counters — not observed GCP evidence")
+      .first(),
+  ).toBeVisible();
+  await expect(page.getByText(/Throttled periods:/).first()).toBeVisible();
+  await expect(
+    page.getByText(/Required risk evidence: yes/).first(),
+  ).toBeVisible();
+  await page.getByText("Memory evidence", { exact: true }).first().click();
+  await expect(page.getByText(/Historical OOM count:/).first()).toBeVisible();
+  await page
+    .locator(".pod-panel")
+    .getByText("Pod details", { exact: true })
+    .first()
+    .click();
+  await expect(
+    page
+      .locator(".pod-panel")
+      .getByText(/Throttled periods:/)
+      .first(),
+  ).toBeVisible();
+  await page.getByText("Evidence and limits", { exact: true }).first().click();
+  await expect(page.getByText(/Throttled periods:/).first()).toBeVisible();
+  const inventory = await (await page.request.get("/api/inventory")).json();
+  const response = await page.request.get(
+    `/api/export/workloads?pool_id=${encodeURIComponent(inventory.pools[0].id)}&days=3`,
+  );
+  expect(await response.text()).toContain("CPU risk denominator");
+  expect(await response.text()).toContain("Synthetic risk counters");
+  expect(collections).toBe(0);
 });

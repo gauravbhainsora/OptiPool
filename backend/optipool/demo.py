@@ -86,6 +86,7 @@ class DemoCollector:
             }
             workload = {
                 "id": key,
+                "controller_uid": "synthetic-controller-" + key,
                 "namespace": "commerce",
                 "kind": "Deployment",
                 "name": name,
@@ -108,6 +109,7 @@ class DemoCollector:
                         "name": pod_name,
                         "namespace": "commerce",
                         "workload": key,
+                        "controller_uid": "synthetic-controller-" + key,
                         "node": node["name"],
                         "labels": {"app": name},
                         "spec": spec,
@@ -124,7 +126,7 @@ class DemoCollector:
                             }
                         ],
                         "uid": pod_name,
-                        "created": now - 12 * 86400,
+                        "created": 1704067200,  # Stable synthetic UID lifetime (2024-01-01 UTC).
                     }
                 )
                 for k in ["cpu", "memory"]:
@@ -143,6 +145,26 @@ class DemoCollector:
                             "memory": mem * 1024**3 * (0.32 + wave * 0.4) * (1 + (count - r) * 0.025),
                         }
                     )
+        risk_series = []
+        for pod in pods:
+            for kind, increment in [
+                ("throttled_periods", 1),
+                ("enforcement_periods", 100),
+                ("oom_events", 0),
+                ("restarts", 0),
+            ]:
+                risk_series.append(
+                    {
+                        "replica": pod["uid"],
+                        "workload": pod["workload"],
+                        "container": pod["spec"]["containers"][0]["name"],
+                        "identity": "synthetic-pod-lifetime",
+                        "kind": kind,
+                        "values": [
+                            [t, i * increment] for i, t in enumerate(range(now - 10 * 86400, now + 1, 1800))
+                        ],
+                    }
+                )
         templates = []
         for zone in pool["locations"]:
             n = deepcopy(nodes[0])
@@ -168,8 +190,36 @@ class DemoCollector:
             },
             "metrics": {
                 "cadence_seconds": 1800,
+                "cpu_rate_window_seconds": 300,
+                "replica_evidence": {
+                    p["uid"]: {
+                        "uid": p["uid"],
+                        "name": p["name"],
+                        "namespace": p["namespace"],
+                        "workload": p["workload"],
+                        "controller_uid": p["controller_uid"],
+                        "created": p["created"],
+                        "observed_at": now,
+                        "memberships": [
+                            {
+                                "pool_id": pool["id"],
+                                "node": p["node"],
+                                "start": p["created"],
+                                "end": now,
+                                "provenance": "explicit synthetic placement history",
+                            }
+                        ],
+                    }
+                    for p in pods
+                },
                 "cutoff": now,
                 "samples": samples,
+                "risk": {
+                    "source": "Synthetic risk counters — not observed GCP evidence",
+                    "cadence_seconds": 1800,
+                    "series": risk_series,
+                    "warnings": [],
+                },
                 "source": "Synthetic fixtures",
                 "memory_definition": "Synthetic working set",
                 "coverage": "complete synthetic history",

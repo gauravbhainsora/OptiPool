@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
-    "test": "playwright test"
+    "test": "playwright test",
+    "test:history": "playwright test --config=playwright.history.config.ts",
+    "test:upstream": "playwright test --config=playwright.upstream.config.ts"
   },
   "dependencies": {
     "@fontsource-variable/dm-sans": "^5.3.0",

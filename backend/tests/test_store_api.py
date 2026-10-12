@@ -179,3 +179,140 @@ def test_json_boundary_and_invalid_manifest(settings):
             ).status_code
             == 422
         )
+
+
+@pytest.mark.parametrize("memory_burst", [False, True])
+def test_saved_source_metadata_reaches_authenticated_api_and_exports_without_reads(
+    settings, monkeypatch, memory_burst
+):
+    import json
+
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from google.oauth2 import id_token
+
+    settings.auth_mode = "iap"
+    settings.iap_audience = "/projects/123/global/backendServices/456"
+    key = ec.generate_private_key(ec.SECP256R1())
+    jwk = json.loads(jwt.algorithms.ECAlgorithm.to_jwk(key.public_key()))
+    jwk.update(kid="test", alg="ES256", use="sig")
+    monkeypatch.setattr(id_token, "_fetch_certs", lambda *args: {"keys": [jwk]})
+    signed = jwt.encode(
+        {
+            "iss": "https://cloud.google.com/iap",
+            "aud": settings.iap_audience,
+            "sub": "123",
+            "email": "user@example.org",
+            "iat": int(time.time()) - 5,
+            "exp": int(time.time()) + 300,
+        },
+        key,
+        algorithm="ES256",
+        headers={"kid": "test"},
+    )
+
+    class SourceCollector(CountingCollector):
+        def collect(self, pool):
+            snapshot = super().collect(pool)
+            snapshot["metrics"].update(
+                source="GMP cAdvisor",
+                memory_definition="Working set",
+                cadence_seconds=60,
+                cpu_rate_window_seconds=300,
+                cpu_alignment_window_seconds=None,
+                units={"cpu": "cores", "memory": "bytes"},
+                query_definition={
+                    "cpu_metric": "container_cpu_usage_seconds_total",
+                    "memory_metric": "container_memory_working_set_bytes",
+                    "cpu_aggregation": "sum containers after rate[5m]",
+                    "memory_aggregation": "sum container samples",
+                },
+                resource_status={"cpu": "available", "memory": "unavailable"},
+                fallback_reason="Native query failed; selected validated GMP partial observations",
+            )
+            if memory_burst:
+                pod = snapshot["context"]["pods"][0]
+                cutoff = snapshot["metrics"]["cutoff"]
+                snapshot["metrics"]["resource_status"]["memory"] = "available"
+                snapshot["metrics"]["samples"] = [
+                    {
+                        "time": cutoff - i * 60,
+                        "replica": pod["uid"],
+                        "workload": pod["workload"],
+                        "attributed": True,
+                        "cpu": 0.1,
+                        "memory": (4 if i == 1 else 1) * 1024**3,
+                    }
+                    for i in range(201)
+                    if i != 100
+                ]
+            else:
+                for point in snapshot["metrics"]["samples"]:
+                    point.pop("memory", None)
+            return snapshot
+
+    collector = SourceCollector(settings)
+    with TestClient(create_app(settings, collector), headers={"x-goog-iap-jwt-assertion": signed}) as client:
+        assert client.get("/api/inventory", headers={"x-goog-iap-jwt-assertion": ""}).status_code == 401
+        pool = initialized(client)["pools"][0]
+        before = collector.calls
+        for days in [1, 5, 10]:
+            usage = client.get("/api/snapshot", params={"pool_id": pool["id"], "days": days}).json()["usage"]
+            assert usage["cpu_rate_window_seconds"] == 300
+            assert usage["resource_status"] == {
+                "cpu": "available",
+                "memory": "available" if memory_burst else "unavailable",
+            }
+            if memory_burst:
+                workload = next(iter(usage["workloads"].values()))
+                assert workload["memory_peak"] == 4 * 1024**3
+                assert workload["memory_p99"] == 1024**3
+                pod_metric = next(iter(usage["pods"].values()))
+                assert pod_metric["memory_expected_samples"] >= 1441
+                assert pod_metric["memory_coverage"] < 0.14
+            assert usage["query_definition"]["memory_metric"] == "container_memory_working_set_bytes"
+        for table in ["workloads", "pods"]:
+            for fmt in ["csv", "xlsx"]:
+                response = client.get(f"/api/export/{table}", params={"pool_id": pool["id"], "format": fmt})
+                if fmt == "csv":
+                    row = next(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig"))))
+                else:
+                    values = list(load_workbook(io.BytesIO(response.content)).active.values)
+                    row = dict(zip(values[0], values[1], strict=True))
+                assert row["Metric source"] == "GMP cAdvisor"
+                assert str(row["CPU rate window seconds"]) == "300"
+                assert row["Memory observations"] == ("available" if memory_burst else "unavailable")
+                assert str(row["Query cadence seconds"]) == "60"
+                if memory_burst:
+                    assert float(row["Sampled memory peak GiB"]) == 4
+                    percentile_key = (
+                        "Highest replica p99 memory GiB" if table == "workloads" else "Memory p99 GiB"
+                    )
+                    assert float(row[percentile_key]) == 1
+                assert row["Fallback reason"] == usage["fallback_reason"]
+        assert collector.calls == before
+
+
+def test_saved_cadence_is_not_reinterpreted_after_config_change(settings):
+    class CadenceCollector(CountingCollector):
+        def collect(self, pool):
+            snapshot = super().collect(pool)
+            snapshot["metrics"]["cadence_seconds"] = self.settings.metric_cadence_seconds
+            return snapshot
+
+    collector = CadenceCollector(settings)
+    with TestClient(create_app(settings, collector)) as client:
+        pool = initialized(client)["pools"][0]
+        original = client.get("/api/snapshot", params={"pool_id": pool["id"], "days": 1}).json()
+        settings.metric_cadence_seconds = 60
+        job = client.post("/api/refresh/pool", params={"pool_id": pool["id"]}, json={}).json()
+        assert wait_job(client, job["id"])["state"] == "succeeded"
+        fresh = client.get("/api/snapshot", params={"pool_id": pool["id"], "days": 1}).json()
+        pinned = client.get(
+            "/api/snapshot", params={"pool_id": pool["id"], "days": 1, "snapshot_id": original["id"]}
+        ).json()
+        assert pinned["usage"]["cadence_seconds"] == 300
+        assert fresh["usage"]["cadence_seconds"] == 60
+        uid = next(iter(original["usage"]["pods"]))
+        assert pinned["usage"]["pods"][uid]["memory_expected_samples"] == 289
+        assert fresh["usage"]["pods"][uid]["memory_expected_samples"] == 1441

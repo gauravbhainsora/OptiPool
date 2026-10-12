@@ -3,6 +3,7 @@
 import base64
 import datetime as dt
 import json
+import math
 import os
 import re
 import tempfile
@@ -18,6 +19,7 @@ from google.auth.transport.requests import AuthorizedSession, Request
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from .pods import steady_containers
 from .resources import node_eligible, pod_resources, quantity
 
 
@@ -239,17 +241,42 @@ class CloudCollector:
         return snapshot
 
     def metrics(self, pool, snapshot):
-        now, samples = int(time.time()), []
+        from .historical_metadata import enrich_history
+
+        result = enrich_history(self, pool, snapshot, self.current_metrics(pool, snapshot))
+        selected_names = {node["name"] for node in snapshot["nodes"]}
+        pods = {
+            (p["namespace"], p["name"]): p
+            for p in snapshot["context"]["pods"]
+            if p.get("workload") and p.get("node") in selected_names
+        }
+        for record in result.get("replica_evidence", {}).values():
+            if record.get("spec"):
+                pods.setdefault((record["namespace"], record["name"]), record)
+        now = result["cutoff"]
+        if self.settings.collect_risk_metrics:
+            try:
+                result["risk"] = self.risk_metrics(pool, pods, now)
+            except Exception as exc:
+                result["risk"] = {
+                    "source": "Unavailable",
+                    "series": [],
+                    "warnings": ["Optional risk collection unavailable: " + str(exc)[:200]],
+                }
+        return result
+
+    def current_metrics(self, pool, snapshot):
+        now = int(time.time())
         result = {
             "cutoff": now,
-            "samples": samples,
+            "samples": [],
             "source": "Unavailable",
             "coverage": "unavailable",
             "memory_definition": "Unavailable",
             "warnings": [],
+            "fallback_reason": None,
+            "resource_status": {"cpu": "unavailable", "memory": "unavailable"},
         }
-        match = f'project_id="{pool["project"]}",location="{pool["location"]}",cluster="{pool["cluster"]}",container!="",container!="POD"'
-        endpoint = f"https://monitoring.googleapis.com/v1/projects/{pool['project']}/location/global/prometheus/api/v1/query_range"
         selected_names = {n["name"] for n in snapshot["nodes"]}
         pods = {
             (p["namespace"], p["name"]): p
@@ -259,14 +286,16 @@ class CloudCollector:
         if not pods:
             result["warnings"].append("No attributable Pods on the selected pool")
             return result
+        candidates = []
         try:
-            queries = []
-            names = defaultdict(list)
+            candidate = {"cutoff": now, "samples": []}
+            match = f'project_id="{pool["project"]}",location="{pool["location"]}",cluster="{pool["cluster"]}",container!="",container!="POD"'
+            endpoint = f"https://monitoring.googleapis.com/v1/projects/{pool['project']}/location/global/prometheus/api/v1/query_range"
+            queries, names = [], defaultdict(list)
             for namespace, name in pods:
                 names[namespace].append(name)
             for namespace, members in names.items():
                 for batch in metric_batches(members):
-                    # Kubernetes names are DNS labels; escape regex and quote for PromQL separately.
                     pattern = "|".join(re.escape(name) for name in batch)
                     scoped = match + ",namespace=" + json.dumps(namespace) + ",pod=~" + json.dumps(pattern)
                     queries.extend(
@@ -286,51 +315,219 @@ class CloudCollector:
                 lambda item: (
                     item[0],
                     self.get(
-                        endpoint, {"query": item[1], "start": now - 10 * 86400, "end": now, "step": 300}
+                        endpoint,
+                        {
+                            "query": item[1],
+                            "start": now - 10 * 86400,
+                            "end": now,
+                            "step": self.settings.metric_cadence_seconds,
+                        },
                     ),
                 ),
             )
-            series = {k: {"status": "success", "data": {"result": []}} for k in ["cpu", "memory"]}
-            for key, response in responses:
-                if response.get("status") != "success":
-                    raise ValueError("GMP query failed")
-                series[key]["data"]["result"].extend(response.get("data", {}).get("result", []))
-            if all(s.get("status") == "success" and s.get("data", {}).get("result") for s in series.values()):
-                result.update(source="GMP cAdvisor", memory_definition="Working set", cadence_seconds=300)
-                values = {}
-                for resource, response in series.items():
-                    for s in response["data"]["result"]:
-                        pod = pods.get((s["metric"].get("namespace"), s["metric"].get("pod")))
-                        if not pod:
+            values = {}
+            for resource, response in responses:
+                if (
+                    response.get("status") != "success"
+                    or not isinstance(response.get("data", {}).get("result"), list)
+                    or response.get("data", {}).get("resultType", "matrix") != "matrix"
+                ):
+                    raise ValueError("Invalid GMP query response")
+                for series in response["data"]["result"]:
+                    pod = pods.get((series["metric"].get("namespace"), series["metric"].get("pod")))
+                    if not pod:
+                        continue
+                    for t, v in series["values"]:
+                        t, value = float(t), float(v)
+                        if not math.isfinite(t):
+                            raise ValueError("Invalid GMP timestamp")
+                        if not math.isfinite(value) or value < 0:
                             continue
-                        for t, v in s.get("values", []):
-                            if t < pod["created"] + (300 if resource == "cpu" else 0):
-                                continue
-                            item = values.setdefault(
-                                (pod["uid"], t),
-                                {
-                                    "time": t,
-                                    "replica": pod["uid"],
-                                    "workload": pod["workload"],
-                                    "attributed": True,
-                                },
-                            )
-                            item[resource] = float(v) if v not in {"NaN", "+Inf", "-Inf"} else None
-                samples.extend(values.values())
+                        if (
+                            t < max(now - 10 * 86400, pod["created"] + (300 if resource == "cpu" else 0))
+                            or t > now
+                        ):
+                            continue
+                        item = values.setdefault(
+                            (pod["uid"], t),
+                            {
+                                "time": t,
+                                "replica": pod["uid"],
+                                "workload": pod["workload"],
+                                "attributed": True,
+                            },
+                        )
+                        item[resource] = value
+            candidate["samples"] = list(values.values())
+            self.describe_metrics(candidate, "GMP cAdvisor", "Working set")
+            if candidate["samples"]:
+                candidates.append(candidate)
+            if all(v == "available" for v in candidate["resource_status"].values()):
+                result.update(candidate)
             else:
-                self.native_metrics(pool, snapshot, result)
+                result["fallback_reason"] = "GMP has no validated observations for one or more resources"
         except Exception as exc:
-            result["warnings"].append("GMP unavailable: " + str(exc)[:200])
+            result["fallback_reason"] = "GMP unavailable: " + str(exc)[:200]
+        if result["source"] == "Unavailable":
             try:
-                self.native_metrics(pool, snapshot, result)
-            except Exception as fallback:
-                result["warnings"].append("Native metrics unavailable: " + str(fallback)[:200])
-        if samples:
+                candidate = {"cutoff": now, "samples": []}
+                self.native_metrics(pool, snapshot, candidate)
+                self.describe_metrics(candidate, "Native GKE Cloud Monitoring", "Non-evictable memory")
+                if candidate["samples"]:
+                    candidates.append(candidate)
+                if candidates:
+                    # Prefer more complete observations; GMP wins a partial tie.
+                    result.update(
+                        max(
+                            candidates,
+                            key=lambda c: sum(v == "available" for v in c["resource_status"].values()),
+                        )
+                    )
+            except Exception as exc:
+                result["warnings"].append("Native metrics unavailable: " + str(exc)[:200])
+                if candidates:
+                    result.update(candidates[0])
+        if result["fallback_reason"]:
+            result["warnings"].append(result["fallback_reason"])
+        if result["samples"]:
             result["coverage"] = "partial — surviving Pods within their observed current lifetime only"
             result["warnings"].append(
                 "Deleted replicas and earlier ownership/pool history are not reconstructed; highest p99 may be understated"
             )
+            for resource, status in result["resource_status"].items():
+                if status == "unavailable":
+                    result["warnings"].append(
+                        f"{resource.capitalize()} observations unavailable from selected source"
+                    )
         return result
+
+    def risk_metrics(self, pool, pods, cutoff):
+        """Read only existing raw counters. Event sources must carry the captured Pod UID."""
+        result = {
+            "source": "GMP saved risk counters",
+            "cadence_seconds": 300,
+            "series": [],
+            "warnings": [],
+            "definitions": {
+                "throttled_periods": "container_cpu_cfs_throttled_periods_total",
+                "enforcement_periods": "container_cpu_cfs_periods_total",
+                "restarts": "kube_pod_container_status_restarts_total",
+                "oom_events": self.settings.risk_oom_counter_metric or "Unavailable",
+                "event_identity": "Pod UID/container lifetime; OOM source must accumulate across container restarts",
+            },
+        }
+        endpoint = f"https://monitoring.googleapis.com/v1/projects/{pool['project']}/location/global/prometheus/api/v1/query_range"
+        match = f'project_id="{pool["project"]}",location="{pool["location"]}",cluster="{pool["cluster"]}",container!="",container!="POD"'
+        names = defaultdict(list)
+        for namespace, name in pods:
+            names[namespace].append(name)
+        queries = []
+        for namespace, members in names.items():
+            for batch in metric_batches(members):
+                pattern = "|".join(re.escape(name) for name in batch)
+                scoped = match + ",namespace=" + json.dumps(namespace) + ",pod=~" + json.dumps(pattern)
+                for kind, metric in result["definitions"].items():
+                    if (
+                        kind in {"throttled_periods", "enforcement_periods", "restarts", "oom_events"}
+                        and metric != "Unavailable"
+                    ):
+                        queries.append((kind, metric + "{" + scoped + "}"))
+
+        def read(query):
+            kind, expression = query
+            try:
+                data = self.get(
+                    endpoint, {"query": expression, "start": cutoff - 10 * 86400, "end": cutoff, "step": 300}
+                )
+                if (
+                    data.get("status") != "success"
+                    or data.get("data", {}).get("resultType", "matrix") != "matrix"
+                    or not isinstance(data.get("data", {}).get("result"), list)
+                ):
+                    raise ValueError("Invalid risk counter response")
+                collected = []
+                for item in data["data"]["result"]:
+                    labels = item["metric"]
+                    pod = pods.get((labels.get("namespace"), labels.get("pod")))
+                    if not pod:
+                        continue
+                    container = labels.get("container")
+                    eligible = [c["name"] for c in steady_containers(pod["spec"])]
+                    if container not in eligible:
+                        continue
+                    if any(label in labels and labels[label] != pod["uid"] for label in ["uid", "pod_uid"]):
+                        continue
+                    if kind in {"oom_events", "restarts"}:
+                        if labels.get("uid") != pod["uid"]:
+                            continue
+                        identity = "pod:" + pod["uid"]
+                    else:
+                        # Preserve source/container-generation labels so resets are handled
+                        # within one series before any container/replica aggregation.
+                        identity = json.dumps(
+                            {k: v for k, v in labels.items() if k != "__name__"}, sort_keys=True
+                        )
+                    values = []
+                    for t, v in item["values"]:
+                        t, v = float(t), float(v)
+                        if not math.isfinite(t) or not math.isfinite(v) or v < 0:
+                            raise ValueError("Invalid risk counter observation")
+                        if max(cutoff - 10 * 86400, pod["created"]) <= t <= cutoff:
+                            values.append([t, v])
+                    if values:
+                        collected.append(
+                            dict(
+                                replica=pod["uid"],
+                                workload=pod["workload"],
+                                container=container,
+                                identity=identity,
+                                kind=kind,
+                                values=values,
+                            )
+                        )
+                return collected, None
+            except Exception as exc:
+                label = "OOM" if kind == "oom_events" else kind
+                return [], f"Optional {label} risk source unavailable: " + str(exc)[:200]
+
+        for collected, warning in parallel_reads(queries, read):
+            result["series"].extend(collected)
+            if warning:
+                result["warnings"].append(warning)
+        if not self.settings.risk_oom_counter_metric:
+            result["warnings"].append(
+                "Historical OOM counter source is not configured; OOM history is unknown"
+            )
+        return result
+
+    def describe_metrics(self, candidate, source, memory_definition):
+        native = source == "Native GKE Cloud Monitoring"
+        candidate.update(
+            source=source,
+            memory_definition=memory_definition,
+            cadence_seconds=self.settings.metric_cadence_seconds,
+            cpu_rate_window_seconds=self.settings.metric_cadence_seconds if native else 300,
+            cpu_alignment_window_seconds=self.settings.metric_cadence_seconds if native else None,
+            units={"cpu": "cores", "memory": "bytes"},
+            query_definition={
+                "cpu_metric": "kubernetes.io/container/cpu/core_usage_time"
+                if native
+                else "container_cpu_usage_seconds_total",
+                "memory_metric": "kubernetes.io/container/memory/used_bytes (non-evictable)"
+                if native
+                else "container_memory_working_set_bytes",
+                "cpu_aggregation": "ALIGN_RATE then sum containers"
+                if native
+                else "sum containers after rate[5m]",
+                "memory_aggregation": "ALIGN_MEAN then sum containers" if native else "sum container samples",
+            },
+            resource_status={
+                r: "available" if any(r in s for s in candidate["samples"]) else "unavailable"
+                for r in ["cpu", "memory"]
+            },
+        )
+        for sample in candidate["samples"]:
+            sample.update(source=source, memory_definition=memory_definition)
 
     def native_metrics(self, pool, snapshot, result):
         now = result["cutoff"]
@@ -352,6 +549,8 @@ class CloudCollector:
         ]:
             filter_text = (
                 f'metric.type="kubernetes.io/container/{metric}" AND '
+                f'resource.type="k8s_container" AND '
+                f'resource.labels.project_id="{pool["project"]}" AND '
                 f'resource.labels.cluster_name="{pool["cluster"]}" AND '
                 f'resource.labels.location="{pool["location"]}"'
             )
@@ -364,32 +563,72 @@ class CloudCollector:
                     "filter": filter_text,
                     "interval.startTime": iso(now - 10 * 86400),
                     "interval.endTime": iso(now),
-                    "aggregation.alignmentPeriod": "300s",
+                    "aggregation.alignmentPeriod": f"{self.settings.metric_cadence_seconds}s",
                     "aggregation.perSeriesAligner": aligner,
                 },
             )
             for s in series:
-                labels = s["resource"]["labels"]
+                monitored = s.get("resource", {})
+                labels = monitored.get("labels", {})
+                metric_identity = s.get("metric", {})
+                scope = {
+                    "project_id": pool["project"],
+                    "location": pool["location"],
+                    "cluster_name": pool["cluster"],
+                }
                 pod = pods.get((labels.get("namespace_name"), labels.get("pod_name")))
-                if not pod:
+                if (
+                    monitored.get("type") != "k8s_container"
+                    or any(labels.get(k) != value for k, value in scope.items())
+                    or metric_identity.get("type") != f"kubernetes.io/container/{metric}"
+                    or (
+                        resource == "memory"
+                        and metric_identity.get("labels", {}).get("memory_type") != "non-evictable"
+                    )
+                    or not pod
+                ):
+                    continue
+                containers = {
+                    c["name"]
+                    for field in ["containers", "initContainers", "ephemeralContainers"]
+                    for c in pod["spec"].get(field, [])
+                }
+                if labels.get("container_name") not in containers or any(
+                    label in labels and labels[label] != pod["uid"] for label in ["uid", "pod_uid"]
+                ):
                     continue
                 for p in s.get("points", []):
                     t = timestamp(p["interval"]["endTime"])
-                    if t < pod["created"] + (300 if resource == "cpu" else 0):
+                    if (
+                        t
+                        < max(
+                            now - 10 * 86400,
+                            pod["created"]
+                            + (self.settings.metric_cadence_seconds if resource == "cpu" else 0),
+                        )
+                        or t > now
+                    ):
+                        continue
+                    value = p["value"].get("doubleValue", p["value"].get("int64Value"))
+                    if value is None:
+                        raise ValueError("Native metric point missing numeric value")
+                    value = float(value)
+                    if not math.isfinite(value) or value < 0:
                         continue
                     item = values.setdefault(
                         (pod["uid"], t),
                         {"time": t, "replica": pod["uid"], "workload": pod["workload"], "attributed": True},
                     )
-                    value = p["value"].get("doubleValue", p["value"].get("int64Value"))
-                    if value is not None:
-                        item[resource] = item.get(resource, 0) + float(value)
+                    total = item.get(resource, 0) + value
+                    if not math.isfinite(total):
+                        raise ValueError("Native metric sum is non-finite")
+                    item[resource] = total
         if values:
             result["samples"].extend(values.values())
             result.update(
                 source="Native GKE Cloud Monitoring",
                 memory_definition="Non-evictable memory",
-                cadence_seconds=300,
+                cadence_seconds=self.settings.metric_cadence_seconds,
             )
 
     def prices(self, pool):
@@ -459,7 +698,11 @@ def normalize(pool, raw, uncertainties):
             if ref["uid"] in seen or ref["uid"] not in by_uid:
                 return {
                     "kind": ref["kind"],
-                    "metadata": {"name": ref["name"], "namespace": p["metadata"]["namespace"]},
+                    "metadata": {
+                        "name": ref["name"],
+                        "uid": ref["uid"],
+                        "namespace": p["metadata"]["namespace"],
+                    },
                 }
             seen.add(ref["uid"])
             obj = by_uid[ref["uid"]]
@@ -507,6 +750,7 @@ def normalize(pool, raw, uncertainties):
             "uid": meta["uid"],
             "created": timestamp(meta["creationTimestamp"]),
             "workload": key,
+            "controller_uid": o["metadata"].get("uid"),
             "labels": meta.get("labels", {}),
             "spec": spec,
             "phase": p["status"].get("phase", "Unknown"),
@@ -541,6 +785,7 @@ def normalize(pool, raw, uncertainties):
             key,
             {
                 "id": key,
+                "controller_uid": o["metadata"].get("uid"),
                 "kind": o["kind"],
                 "name": o["metadata"]["name"],
                 "namespace": meta["namespace"],

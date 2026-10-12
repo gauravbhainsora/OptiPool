@@ -30,6 +30,8 @@ jobs:
       - run: bash scripts/check.sh
       - run: cd frontend && npx playwright install --with-deps chromium
       - run: npm --prefix frontend test
+      - run: npm --prefix frontend run test:history
+      - run: npm --prefix frontend run test:upstream
       - run: .venv/bin/python scripts/benchmark.py
   helm-install:
     runs-on: ubuntu-latest

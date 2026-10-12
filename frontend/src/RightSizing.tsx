@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, params } from "./api";
 import { cores, gib, Notice } from "./components";
 import type { Recommendation, Snapshot } from "./types";
+import MetricEvidence from "./MetricEvidence";
 
 export default function RightSizing({ snapshot }: { snapshot: Snapshot }) {
   const [headroom, setHeadroom] = useState(20);
@@ -51,6 +52,15 @@ export default function RightSizing({ snapshot }: { snapshot: Snapshot }) {
         </label>
       </div>
       {error && <Notice>{error}</Notice>}
+      <p className="form-hint">
+        Reduction policy: at least{" "}
+        {snapshot.usage.reduction_policy.minimum_samples} valid samples,{" "}
+        {snapshot.usage.reduction_policy.minimum_observation_seconds / 3600}{" "}
+        hours represented and{" "}
+        {snapshot.usage.reduction_policy.minimum_coverage * 100}%
+        selected-window coverage for every replica, independently for CPU and
+        memory. Operational policy, not a statistical confidence guarantee.
+      </p>
       {data ? (
         <>
           <div className="table-wrap">
@@ -98,6 +108,16 @@ export default function RightSizing({ snapshot }: { snapshot: Snapshot }) {
                     <td>
                       <details>
                         <summary>Evidence and limits</summary>
+                        <MetricEvidence
+                          resource="CPU"
+                          evidence={r.cpu_evidence}
+                          risk={r.cpu_risk}
+                        />
+                        <MetricEvidence
+                          resource="Memory"
+                          evidence={r.memory_evidence}
+                          risk={r.memory_risk}
+                        />
                         <ul>
                           {r.warnings.map((w) => (
                             <li key={w}>{w}</li>

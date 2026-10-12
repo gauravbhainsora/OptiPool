@@ -2,20 +2,28 @@
 
 Set `OPTIPOOL_CONFIG` to a YAML file. Default: `config.local.yaml`. `OPTIPOOL_MODE`, `OPTIPOOL_AUTH_MODE`, `OPTIPOOL_IAP_AUDIENCE` and `OPTIPOOL_DATABASE` override their respective YAML keys. Keep private config, ADC and SQLite files out of Git. Use separate databases for demo and live modes.
 
-| Setting | Default / behavior |
-|---|---|
-| `mode` | `demo` (synthetic) or `live` (read-only REST adapters) |
-| `auth_mode` | `local` for loopback/private development; `iap` validates signed assertions |
-| `iap_audience` | Required with IAP; `/projects/NUMBER/global/backendServices/ID` |
-| `database` | `data/optipool.db`; chart enforces `/data/*.db` on its PVC |
-| `project_allowlist` | Empty means dynamic discovery of all ACTIVE projects the collector can get |
-| `environment` | Project → `project/cluster` → `project/cluster/pool`, most specific wins |
-| `default_environment` | `production`; unclassified pools are not silently treated as nonproduction |
-| `live_validation_complete` | `false`; production collection is blocked until operator validation |
-| `min_metric_samples` | 20 samples per replica/resource before temporal p99 is displayed; not a statistical confidence guarantee |
-| `max_added_nodes` | 100; bounded greedy search, configurable up to 500 |
-| `max_replicas` | 2,000; steady-state target, not rollout surge or HPA maximum |
-| `pricing_mappings` | Exact region/machine/provisioning/disk public SKU mappings; otherwise cost unavailable |
+| Setting                             | Default / behavior                                                                                           |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `mode`                              | `demo` (synthetic) or `live` (read-only REST adapters)                                                       |
+| `auth_mode`                         | `local` for loopback/private development; `iap` validates signed assertions                                  |
+| `iap_audience`                      | Required with IAP; `/projects/NUMBER/global/backendServices/ID`                                              |
+| `database`                          | `data/optipool.db`; chart enforces `/data/*.db` on its PVC                                                   |
+| `project_allowlist`                 | Empty means dynamic discovery of all ACTIVE projects the collector can get                                   |
+| `environment`                       | Project → `project/cluster` → `project/cluster/pool`, most specific wins                                     |
+| `default_environment`               | `production`; unclassified pools are not silently treated as nonproduction                                   |
+| `live_validation_complete`          | `false`; production collection is blocked until operator validation                                          |
+| `min_metric_samples`                | 20 samples per replica/resource before temporal p99 is displayed; not a statistical confidence guarantee     |
+| `min_reduction_observation_seconds` | 86,400 (24 hours) of represented valid sampling intervals before a request reduction                         |
+| `min_reduction_coverage`            | 0.9 selected-window coverage for every observed replica/resource before a reduction                          |
+| `metric_cadence_seconds`            | 300; choose 60 or 300 for GMP evaluation and native alignment; saved snapshots retain their original cadence |
+| `collect_risk_metrics` | `false`; explicit-refresh-only read of existing GMP cumulative counters, no cloud configuration changes |
+| `risk_oom_counter_metric` | Empty/unknown by default; existing cumulative Pod UID/container lifetime OOM counter with uid/container labels |
+| `require_cpu_risk_evidence`, `require_memory_risk_evidence` | Both true; absent/incomplete required evidence withholds that resource's reductions. Explicit false opt-outs are visible |
+| `throttling_risk_threshold` | 0.10; any eligible container at or above this operational count-ratio threshold withholds CPU reductions |
+| `min_risk_observation_seconds`, `min_risk_coverage` | 86400 seconds / 0.9 selected-window coverage; independent of usage policy |
+| `max_added_nodes`                   | 100; bounded greedy search, configurable up to 500                                                           |
+| `max_replicas`                      | 2,000; steady-state target, not rollout surge or HPA maximum                                                 |
+| `pricing_mappings`                  | Exact region/machine/provisioning/disk public SKU mappings; otherwise cost unavailable                       |
 
 ## Local live mode
 
@@ -46,7 +54,9 @@ The collector needs `resourcemanager.projects.get` for discovery, GKE cluster re
 
 ## Monitoring
 
-GMP uses `sum by(namespace,pod)(rate(container_cpu_usage_seconds_total[5m]))` and working-set memory gauges, scoped by project/location/cluster, queried over ten days with a 300-second step. CPU is cores; memory is bytes. Required cAdvisor series must actually be enabled. Native fallback uses reset-aware `ALIGN_RATE` for CPU core usage time and `ALIGN_MEAN` for non-evictable memory, aligned every 300 seconds. These p99 values describe the saved sampled representation, not instantaneous spikes.
+GMP uses `sum by(namespace,pod)(rate(container_cpu_usage_seconds_total[5m]))` and working-set memory gauges, scoped by project/location/cluster, queried over ten days with the configured 60- or 300-second step (default 300). GMP CPU retains its five-minute rate regardless of step. CPU is cores; memory is bytes. Required cAdvisor series must actually be enabled. Native fallback uses reset-aware `ALIGN_RATE` for CPU core usage time and `ALIGN_MEAN` for non-evictable memory, aligned at the configured cadence. Native CPU averaging/alignment is therefore 60 or 300 seconds; the actual window is saved and displayed. These p99 values describe the saved sampled representation, not instantaneous spikes. Workload and Pod tables and CSV/XLSX expose sampled memory peaks separately from p99. A workload peak is the highest saved Pod sample, never the sum of independently timed container peaks. Native memory peaks are maxima of aligned means; their definition remains distinct from GMP working set. Memory proposals retain that sampled peak as a floor, including compatible attributed historical replicas. Demo fixtures retain their own 1,800-second cadence; changing live cadence does not reinterpret them or legacy snapshots.
+
+See [the synthetic cadence comparison](cadence-benchmark.md) for ten-day sample, storage, retention and saved-view measurements. The 300-second default remains unchanged.
 
 Attribution uses currently observed Pod UID, immutable binding, controller ownership and creation time. Samples before the current lifetime are omitted. Deleted Pods/owners and unavailable history are not guessed. Live coverage remains partial; the highest-replica p99 may be understated when a former replica was removed. No history means unavailable, never zero. Each saved window uses one source and one memory definition.
 
@@ -85,3 +95,13 @@ pricing_mappings:
 ```
 
 This is a structural example, not verified pricing. SKU IDs/units must match the current [public Billing catalog](https://docs.cloud.google.com/billing/docs/how-to/get-pricing-information-api). Missing/unsupported tiers, units, regions or mappings make prices unavailable. Prices are saved only on explicit pool collection. Spot resources cannot use a resource-based commitment mapping. Existing CUD coverage, negotiation, credits and billed savings are outside scope.
+
+## Request reduction evidence
+
+A sampled p99 may remain visible when reduction evidence is insufficient. CPU and memory gates are independent: sample minimum, represented interval duration and selected-window coverage must all meet policy for every replica. Missing or excluded replicas make the observed workload maximum partial and prevent reductions. Unknown cadence, Pod lifetime or CPU rate-window semantics never imply eligibility. A complete two-hour Pod lifetime is still only two hours of a ten-day metrics window. Represented duration is the union of valid cadence intervals clipped to creation, CPU rate-window eligibility, the selected window and evidenced pool memberships; gaps do not count. Expected counts use each resource’s eligible lifetime/membership interval. Historical ended memberships stop at their saved endpoint.
+
+Legacy GMP and native collector CPU rate definitions are inferred as five minutes and explicitly labelled as inferred; legacy synthetic fixtures use a zero warmup. Other missing definitions remain unknown. The 24-hour/90% defaults are operational policy rather than a statistical confidence guarantee. CPU smoothing, sampled memory peaks and unobserved deleted replicas remain limits. Policy keys participate in the immutable response cache. Combined pool views retain per-pool policy, cutoff and winner provenance; their observations need not be simultaneous. OOM/restart floors, memory peak floors and heterogeneous-template review still apply. Inventory and capacity planning remain available without monitoring. Reads and exports never collect cloud data.
+
+## Optional upstream historical replicas
+
+The disabled-by-default `historical_metadata_metric` accepts an existing joined Prometheus interval source, not raw owner-name metrics. Its full label, identity, temporal validity, usage compatibility and bounded-read contract is documented in [historical-metadata.md](historical-metadata.md). Configure lookback (1–10 days), metadata evaluation step (60–300 seconds), maximum replicas and usage requests only after operator validation of the existing source. GMP/cAdvisor availability alone does not establish historical ownership support. Failure is saved as partial/unavailable history while current inventory and retained compatible evidence remain usable.

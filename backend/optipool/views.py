@@ -9,8 +9,21 @@ from .pods import selected_pods
 
 
 class SavedViews:
-    def __init__(self, store, minimum=20, max_bytes=64 * 1024**2):
+    def __init__(
+        self,
+        store,
+        minimum=20,
+        max_bytes=64 * 1024**2,
+        minimum_observation_seconds=86400,
+        minimum_coverage=0.9,
+        risk_policy=None,
+    ):
         self.store, self.minimum, self.max_bytes = store, minimum, max_bytes
+        self.risk_policy = dict(risk_policy or {})
+        self.minimum_observation_seconds, self.minimum_coverage = (
+            minimum_observation_seconds,
+            minimum_coverage,
+        )
         self.entries = OrderedDict()
         self.bytes = 0
         # Stripes deduplicate simultaneous cold reads without an unbounded lock registry.
@@ -23,7 +36,14 @@ class SavedViews:
             return None
         if sid is None:
             return None
-        key = (sid, days, self.minimum)
+        key = (
+            sid,
+            days,
+            self.minimum,
+            self.minimum_observation_seconds,
+            self.minimum_coverage,
+            tuple(sorted(self.risk_policy.items())),
+        )
         with self.build_locks[hash(key) % len(self.build_locks)]:
             with self.lock:
                 if key in self.entries:
@@ -34,7 +54,14 @@ class SavedViews:
                 return None
             view = {
                 **{k: v for k, v in value.items() if k not in {"metrics", "context"}},
-                "usage": summarize(value, days, self.minimum),
+                "usage": summarize(
+                    value,
+                    days,
+                    self.minimum,
+                    self.minimum_observation_seconds,
+                    self.minimum_coverage,
+                    self.risk_policy,
+                ),
                 "pods": selected_pods(value),
                 "context_warnings": value.get("context", {}).get("uncertainties", []),
                 "pending_demand": len(value.get("context", {}).get("pending", [])),

@@ -44,14 +44,28 @@ export type Workload = {
   spec: Record<string, unknown>;
 };
 export type Metric = {
+  cpu_risk?: Risk;
+  memory_risk?: Risk;
+
+  memory_peak: number | null;
+  memory_peak_replica: string | null;
+  cpu_evidence?: ResourceEvidence;
+  memory_evidence?: ResourceEvidence;
   cpu_p99: number | null;
   memory_p99: number | null;
   cpu_replica: string | null;
   memory_replica: string | null;
   samples: number;
   replicas_observed: number;
+  historical_replicas_observed?: number;
+  historical_replica_uids?: string[];
 };
 export type Usage = {
+  reduction_policy: {
+    minimum_samples: number;
+    minimum_observation_seconds: number;
+    minimum_coverage: number;
+  };
   pods: Record<string, PodMetric>;
   days: number;
   cutoff: number;
@@ -59,6 +73,19 @@ export type Usage = {
   source: string;
   memory_definition: string;
   coverage: string;
+  cadence_seconds: number | null;
+  cpu_rate_window_seconds: number | null;
+  cpu_alignment_window_seconds: number | null;
+  query_definition: Record<string, string> | null;
+  units: Record<string, string> | null;
+  resource_status: { cpu: string; memory: string };
+  historical_discovery?: {
+    status: string;
+    metadata_metric?: string;
+    replicas_discovered: number;
+    reasons: string[];
+  } | null;
+  fallback_reason: string | null;
   minimum_samples: number;
   warnings: string[];
   workloads: Record<string, Metric>;
@@ -179,6 +206,10 @@ export type Estimate = {
 };
 
 export type PodMetric = {
+  cpu_risk?: Risk;
+  memory_risk?: Risk;
+  cpu_evidence?: ResourceEvidence;
+  memory_evidence?: ResourceEvidence;
   cpu_p99: number | null;
   memory_p99: number | null;
   cpu_latest: number | null;
@@ -206,6 +237,12 @@ export type NodeBudget = {
   service_rejections?: Record<string, string[]>;
 };
 export type Recommendation = {
+  cpu_risk?: Risk;
+  memory_risk?: Risk;
+  cpu_evidence?: ResourceEvidence;
+  memory_evidence?: ResourceEvidence;
+  reduction_eligible: { cpu: boolean; memory: boolean };
+  reduction_reasons: { cpu: string[]; memory: string[] };
   workload_id: string;
   name: string;
   namespace: string;
@@ -218,6 +255,22 @@ export type Recommendation = {
   pool_replicas: number;
   status: string;
   warnings: string[];
+};
+
+export type ResourceEvidence = {
+  definition_basis?: string;
+  cpu_rate_window_seconds?: number | null;
+  valid_samples: number;
+  expected_samples: number | null;
+  represented_seconds: number | null;
+  lifetime_coverage: number | null;
+  selected_window_coverage: number | null;
+  replica: string | null;
+  source: string;
+  cadence_seconds: number | null;
+  eligible: boolean;
+  partial: boolean;
+  reasons: string[];
 };
 export type Comparison = {
   before: { id: string; saved_at: number };
@@ -233,7 +286,17 @@ export type Comparison = {
   }[];
 };
 
-export type ScopeSource = {
+export type ScopeSource = Pick<
+  Usage,
+  | "cadence_seconds"
+  | "cpu_rate_window_seconds"
+  | "cpu_alignment_window_seconds"
+  | "query_definition"
+  | "units"
+  | "resource_status"
+  | "fallback_reason"
+  | "historical_discovery"
+> & {
   pool_id: string;
   pool_name: string;
   snapshot_id: string;
@@ -263,11 +326,62 @@ export type ClusterSnapshot = {
     | "limits"
     | "services"
   > & {
-    pools: (ScopeSource & { replicas: number })[];
+    pools: (ScopeSource & {
+      replicas: number;
+      cpu_risk?: Risk;
+      memory_risk?: Risk;
+      cpu_evidence?: ResourceEvidence;
+      memory_evidence?: ResourceEvidence;
+    })[];
+    cpu_risk?: Risk;
+    memory_risk?: Risk;
+    cpu_evidence?: ResourceEvidence;
+    memory_evidence?: ResourceEvidence;
     cpu_p99: number | null;
     memory_p99: number | null;
+    historical_replicas_observed?: number;
+    historical_replica_uids?: string[];
+    memory_peak: number | null;
+    memory_peak_replica: string | null;
+    memory_peak_pool: string | null;
     cpu_complete: boolean;
     memory_complete: boolean;
     memory_definitions: string[];
   })[];
+};
+
+export type Risk = {
+  collection_status?: string;
+  collection_warnings?: string[];
+  retained_snapshot_ids?: string[];
+  cadence_seconds: number | null;
+  minimum_observation_seconds: number;
+  minimum_coverage: number;
+  status: "available" | "unknown";
+  source: string;
+  required: boolean;
+  adverse: boolean;
+  eligible: boolean;
+  reasons: string[];
+  numerator: number | null;
+  denominator: number | null;
+  ratio: number | null;
+  threshold: number | null;
+  oom_events: number | null;
+  restarts: number | null;
+  represented_seconds: number | null;
+  selected_window_coverage: number | null;
+  limitations: string[];
+  containers: {
+    container: string;
+    replica?: string;
+    status: string;
+    adverse: boolean;
+    numerator: number | null;
+    denominator: number | null;
+    ratio: number | null;
+    oom_events: number | null;
+    restarts: number | null;
+    counter_resets: number | null;
+  }[];
 };

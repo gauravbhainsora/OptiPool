@@ -28,6 +28,7 @@ import {
 } from "./components";
 import Estimator from "./Estimator";
 import PodTable from "./PodTable";
+import MetricEvidence from "./MetricEvidence";
 import RightSizing from "./RightSizing";
 import SnapshotCompare from "./SnapshotCompare";
 import PoolDesigner from "./PoolDesigner";
@@ -210,12 +211,16 @@ export default function App() {
   async function refresh(kind: "pool" | "inventory") {
     setError("");
     try {
-      setJob(
-        await api<Job>(
-          `/refresh/${kind}${kind === "pool" ? `?${params({ pool_id: poolId })}` : ""}`,
-          { method: "POST", body: "{}" },
-        ),
+      const next = await api<Job>(
+        `/refresh/${kind}${kind === "pool" ? `?${params({ pool_id: poolId })}` : ""}`,
+        { method: "POST", body: "{}" },
       );
+      setJob(next);
+      if (["succeeded", "failed"].includes(next.state)) {
+        await loadInventory();
+        setGeneration((v) => v + 1);
+        if (next.error) setError(next.error);
+      }
     } catch (e) {
       setError((e as Error).message);
     }
@@ -950,9 +955,67 @@ function Workloads({
           Highest-replica p99 · CPU and memory maxima calculated independently
         </span>
         <span>
-          {snapshot.usage.memory_definition} · {snapshot.usage.coverage}
+          Source: {snapshot.usage.source} · {snapshot.usage.memory_definition} ·{" "}
+          {snapshot.usage.coverage}
+        </span>
+        <span>
+          Query cadence:{" "}
+          {snapshot.usage.cadence_seconds == null
+            ? "Unknown"
+            : `${snapshot.usage.cadence_seconds}s`}{" "}
+          · CPU rate window:{" "}
+          {snapshot.usage.cpu_rate_window_seconds == null
+            ? "Unknown"
+            : `${snapshot.usage.cpu_rate_window_seconds}s`}
+        </span>
+        <span>
+          CPU observations: {snapshot.usage.resource_status.cpu} · Memory
+          observations: {snapshot.usage.resource_status.memory}
         </span>
       </div>
+      <p className="muted">
+        Sampled peaks can miss short spikes. Finer query cadence does not remove
+        the CPU rate window.
+      </p>
+      {snapshot.usage.historical_discovery && (
+        <details className="panel">
+          <summary>
+            Historical discovery: {snapshot.usage.historical_discovery.status} ·{" "}
+            {snapshot.usage.historical_discovery.replicas_discovered} replicas
+            discovered
+          </summary>
+          <p>
+            Metadata metric:{" "}
+            {snapshot.usage.historical_discovery.metadata_metric ??
+              "Not configured"}
+          </p>
+          {snapshot.usage.historical_discovery.reasons.map((reason) => (
+            <p key={reason}>{reason}</p>
+          ))}
+        </details>
+      )}
+      {snapshot.usage.fallback_reason && (
+        <Notice>{snapshot.usage.fallback_reason}</Notice>
+      )}
+      <details className="panel">
+        <summary>Saved query definitions</summary>
+        <p>
+          CPU: {snapshot.usage.query_definition?.cpu_metric ?? "Unknown"} ·{" "}
+          {snapshot.usage.query_definition?.cpu_aggregation ?? "Unknown"} ·
+          Unit: {snapshot.usage.units?.cpu ?? "Unknown"}
+        </p>
+        <p>
+          Memory: {snapshot.usage.query_definition?.memory_metric ?? "Unknown"}{" "}
+          · {snapshot.usage.query_definition?.memory_aggregation ?? "Unknown"} ·
+          Unit: {snapshot.usage.units?.memory ?? "Unknown"}
+        </p>
+        <p>
+          CPU alignment window:{" "}
+          {snapshot.usage.cpu_alignment_window_seconds == null
+            ? "Unknown / not applicable"
+            : `${snapshot.usage.cpu_alignment_window_seconds}s`}
+        </p>
+      </details>
       {snapshot.usage.warnings.map((w) => (
         <Notice key={w}>{w}</Notice>
       ))}
@@ -967,6 +1030,7 @@ function Workloads({
                 <th>Pool requests</th>
                 <th>Highest-replica p99 CPU</th>
                 <th>Highest-replica p99 memory</th>
+                <th>Sampled memory peak</th>
                 <th>Services</th>
               </tr>
             </thead>
@@ -1010,9 +1074,19 @@ function Workloads({
                         {w.kind !== "Deployment"
                           ? `Workload type: ${w.kind}`
                           : m
-                            ? `${m.replicas_observed} replicas observed`
+                            ? `${m.replicas_observed} replicas observed · ${m.historical_replicas_observed ?? 0} historical`
                             : "No attributable history"}
                       </small>
+                      {w.kind === "Deployment" && (
+                        <details>
+                          <summary>CPU evidence</summary>
+                          <MetricEvidence
+                            resource="CPU"
+                            evidence={m?.cpu_evidence}
+                            risk={m?.cpu_risk}
+                          />
+                        </details>
+                      )}
                     </td>
                     <td title={m?.memory_replica ?? undefined}>
                       {w.kind === "Deployment"
@@ -1025,6 +1099,22 @@ function Workloads({
                             ? `${m.samples.toLocaleString()} samples`
                             : `Minimum ${snapshot.usage.minimum_samples} samples`}
                       </small>
+                      {w.kind === "Deployment" && (
+                        <details>
+                          <summary>Memory evidence</summary>
+                          <MetricEvidence
+                            resource="Memory"
+                            evidence={m?.memory_evidence}
+                            risk={m?.memory_risk}
+                          />
+                        </details>
+                      )}
+                    </td>
+                    <td title={m?.memory_peak_replica ?? undefined}>
+                      {w.kind === "Deployment"
+                        ? gib(m?.memory_peak)
+                        : "Inspect Pod metrics"}
+                      <small>Highest observed replica sample</small>
                     </td>
                     <td>
                       {w.services.length ? (

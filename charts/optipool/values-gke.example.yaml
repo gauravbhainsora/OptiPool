@@ -12,6 +12,12 @@ config:
     EXAMPLE_DEV_PROJECT: nonproduction
   default_environment: production
   live_validation_complete: false
+  # Optional existing joined interval source; see docs/historical-metadata.md.
+  historical_metadata_metric: null
+  historical_metadata_step_seconds: 300
+  historical_metadata_lookback_days: 10
+  historical_metadata_max_replicas: 200
+  historical_metadata_max_requests: 400
 serviceAccount:
   annotations:
     iam.gke.io/gcp-service-account: COLLECTOR_EMAIL

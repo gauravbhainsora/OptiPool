@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Search } from "lucide-react";
 import { cores, date, ExportButtons, gib } from "./components";
 import ClusterExportButtons from "./ClusterExportButtons";
+import MetricEvidence from "./MetricEvidence";
 import type { ClusterSnapshot, Snapshot } from "./types";
 
 export default function PodTable({
@@ -128,6 +129,7 @@ export default function PodTable({
                       {gib(m?.memory_latest)} / {gib(m?.memory_p99)}
                     </small>
                     <small>Latest / p99 · {days} days</small>
+                    <small>Sampled peak: {gib(m?.memory_peak)}</small>
                     <small>
                       CPU at {date(m?.cpu_sample_at)} · memory at{" "}
                       {date(m?.memory_sample_at)}
@@ -154,9 +156,19 @@ export default function PodTable({
                         {m?.memory_coverage == null
                           ? "unknown"
                           : `${Math.round(m.memory_coverage * 100)}% memory`}
-                        . CPU throttling history is not collected.
+                        .
                       </p>
                       <div className="table-wrap">
+                        <MetricEvidence
+                          resource="CPU"
+                          evidence={m?.cpu_evidence}
+                          risk={m?.cpu_risk}
+                        />
+                        <MetricEvidence
+                          resource="Memory"
+                          evidence={m?.memory_evidence}
+                          risk={m?.memory_risk}
+                        />
                         <table>
                           <thead>
                             <tr>

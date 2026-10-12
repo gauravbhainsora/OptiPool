@@ -306,3 +306,67 @@ def test_compact_core_matches_full_snapshot_and_supports_legacy_rows(settings, s
         store.db.execute("DELETE FROM snapshot_core WHERE snapshot_id=?", (sid,))
     assert store.snapshot(snapshot_id=sid, include_metrics=False) == core
     store.close()
+
+
+def test_replica_window_excludes_incompatible_sample_memory_definition(saved):
+    from optipool.metrics import summarize
+
+    uid = saved["context"]["pods"][0]["uid"]
+    workload = saved["context"]["pods"][0]["workload"]
+    cutoff = saved["metrics"]["cutoff"]
+    saved["metrics"].update(
+        memory_definition="Working set",
+        samples=[
+            {
+                "time": cutoff - i * 300,
+                "replica": uid,
+                "workload": workload,
+                "attributed": True,
+                "memory": 100,
+                "memory_definition": "Working set",
+            }
+            for i in range(20)
+        ],
+    )
+    saved["metrics"]["samples"].extend(
+        [
+            {
+                "time": cutoff - i * 300,
+                "replica": uid,
+                "workload": workload,
+                "attributed": True,
+                "memory": 9999,
+                "memory_definition": "Non-evictable memory",
+            }
+            for i in range(20)
+        ]
+    )
+    usage = summarize(saved, 1)
+    assert usage["pods"][uid]["memory_p99"] == 100
+    assert any("incompatible" in warning for warning in usage["warnings"])
+
+
+def test_sampled_memory_burst_is_separate_from_p99_and_preserved_as_historical_floor(saved):
+    pod = saved["context"]["pods"][0]
+    cutoff = saved["metrics"]["cutoff"]
+    saved["metrics"].update(
+        cadence_seconds=60,
+        samples=[
+            {
+                "time": cutoff - i * 60,
+                "replica": "deleted-replica",
+                "workload": pod["workload"],
+                "attributed": True,
+                "cpu": 0.1,
+                "memory": (4 if i == 1 else 1) * 1024**3,
+            }
+            for i in range(201)
+        ],
+    )
+    usage = summarize(saved, 1)
+    metric = usage["workloads"][pod["workload"]]
+    assert metric["memory_p99"] == 1024**3
+    assert metric["memory_peak"] == 4 * 1024**3
+    assert metric["memory_peak_replica"] == "deleted-replica"
+    row = next(r for r in recommend(saved, usage)["rows"] if r["workload_id"] == pod["workload"])
+    assert row["proposed"]["memory"] >= 4 * 1024**3

@@ -1,12 +1,222 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["replicaCount", "image", "config", "persistence"],
+  "required": [
+    "replicaCount",
+    "image",
+    "config",
+    "persistence"
+  ],
   "properties": {
-    "replicaCount": {"type":"integer","enum":[1]},
-    "image": {"type":"object","required":["repository","tag","pullPolicy"],"properties":{"repository":{"type":"string","minLength":1},"tag":{"type":"string","minLength":1,"not":{"enum":["latest"]}},"digest":{"type":"string","pattern":"^$|^sha256:[a-f0-9]{64}$"},"pullPolicy":{"enum":["Always","IfNotPresent","Never"]}}},
-    "config": {"type":"object","required":["mode","auth_mode","database"],"properties":{"mode":{"enum":["demo","live"]},"auth_mode":{"enum":["local","iap"]},"iap_audience":{"type":"string"},"database":{"type":"string","pattern":"^/data/[^/]+\\.db$"},"project_allowlist":{"type":"array","items":{"type":"string"}},"default_environment":{"enum":["production","nonproduction"]},"environment":{"type":"object","additionalProperties":{"enum":["production","nonproduction"]}},"live_validation_complete":{"type":"boolean"},"min_metric_samples":{"type":"integer","minimum":1},"max_added_nodes":{"type":"integer","minimum":1,"maximum":500}}},
-    "persistence":{"type":"object","required":["size","retain"],"properties":{"size":{"type":"string","minLength":1},"retain":{"type":"boolean"},"existingClaim":{"type":"string"}}},
-    "ingress":{"type":"object","properties":{"enabled":{"type":"boolean"},"host":{"type":"string"},"managedCertificate":{"type":"string"},"iapOAuthSecret":{"type":"string"}}}
+    "replicaCount": {
+      "type": "integer",
+      "enum": [
+        1
+      ]
+    },
+    "image": {
+      "type": "object",
+      "required": [
+        "repository",
+        "tag",
+        "pullPolicy"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string",
+          "minLength": 1,
+          "not": {
+            "enum": [
+              "latest"
+            ]
+          }
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^$|^sha256:[a-f0-9]{64}$"
+        },
+        "pullPolicy": {
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "required": [
+        "mode",
+        "auth_mode",
+        "database"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "demo",
+            "live"
+          ]
+        },
+        "auth_mode": {
+          "enum": [
+            "local",
+            "iap"
+          ]
+        },
+        "iap_audience": {
+          "type": "string"
+        },
+        "database": {
+          "type": "string",
+          "pattern": "^/data/[^/]+\\.db$"
+        },
+        "project_allowlist": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "default_environment": {
+          "enum": [
+            "production",
+            "nonproduction"
+          ]
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": {
+            "enum": [
+              "production",
+              "nonproduction"
+            ]
+          }
+        },
+        "live_validation_complete": {
+          "type": "boolean"
+        },
+        "min_metric_samples": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "metric_cadence_seconds": {
+          "type": "integer",
+          "enum": [
+            60,
+            300
+          ]
+        },
+        "min_reduction_observation_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 864000
+        },
+        "min_reduction_coverage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "max_added_nodes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        },
+        "historical_metadata_metric": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-zA-Z_:][a-zA-Z0-9_:]{0,127}$"
+        },
+        "historical_metadata_step_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 300
+        },
+        "historical_metadata_lookback_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "historical_metadata_max_replicas": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "historical_metadata_max_requests": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 2000
+        },
+        "collect_risk_metrics": {
+          "type": "boolean"
+        },
+        "risk_oom_counter_metric": {
+          "type": "string",
+          "pattern": "^$|^[a-zA-Z_:][a-zA-Z0-9_:]*$"
+        },
+        "require_cpu_risk_evidence": {
+          "type": "boolean"
+        },
+        "require_memory_risk_evidence": {
+          "type": "boolean"
+        },
+        "throttling_risk_threshold": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "min_risk_observation_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 864000
+        },
+        "min_risk_coverage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "required": [
+        "size",
+        "retain"
+      ],
+      "properties": {
+        "size": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retain": {
+          "type": "boolean"
+        },
+        "existingClaim": {
+          "type": "string"
+        }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "host": {
+          "type": "string"
+        },
+        "managedCertificate": {
+          "type": "string"
+        },
+        "iapOAuthSecret": {
+          "type": "string"
+        }
+      }
+    }
   }
 }

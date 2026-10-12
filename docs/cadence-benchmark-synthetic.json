@@ -1,0 +1,42 @@
+[
+  {
+    "cadence_seconds": 300,
+    "pods": 10,
+    "days": 10,
+    "requests": 2,
+    "response_bytes": 1608337,
+    "resource_points": 57620,
+    "saved_samples": 28810,
+    "refresh_seconds": 3.1833,
+    "sqlite_backup_bytes_one_snapshot": 1122304,
+    "cold_saved_view_seconds_1_5_10_days": [
+      0.4123,
+      0.3251,
+      0.5429
+    ],
+    "warm_saved_view_p95_ms": 0.0039,
+    "ten_day_view_bytes": 269109,
+    "retention_old_pruned_latest_kept": true,
+    "cloud_requests_for_saved_views": 0
+  },
+  {
+    "cadence_seconds": 60,
+    "pods": 10,
+    "days": 10,
+    "requests": 2,
+    "response_bytes": 8032951,
+    "resource_points": 288020,
+    "saved_samples": 144010,
+    "refresh_seconds": 15.9011,
+    "sqlite_backup_bytes_one_snapshot": 5009408,
+    "cold_saved_view_seconds_1_5_10_days": [
+      3.3101,
+      2.5702,
+      3.9236
+    ],
+    "warm_saved_view_p95_ms": 0.0038,
+    "ten_day_view_bytes": 1045180,
+    "retention_old_pruned_latest_kept": true,
+    "cloud_requests_for_saved_views": 0
+  }
+]

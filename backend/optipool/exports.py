@@ -12,6 +12,59 @@ def iso(value):
     return datetime.fromtimestamp(value, UTC).isoformat() if value else "Not fetched"
 
 
+def evidence_columns(metric):
+    columns = {}
+    for resource, label in [("cpu", "CPU"), ("memory", "Memory")]:
+        evidence = metric.get(resource + "_evidence") or {}
+        risk = metric.get(resource + "_risk") or {}
+        for field in [
+            "status",
+            "cadence_seconds",
+            "minimum_observation_seconds",
+            "minimum_coverage",
+            "source",
+            "numerator",
+            "denominator",
+            "ratio",
+            "threshold",
+            "oom_events",
+            "restarts",
+            "counter_resets",
+            "represented_seconds",
+            "selected_window_coverage",
+            "required",
+            "eligible",
+        ]:
+            columns[f"{label} risk {field.replace('_', ' ')}"] = risk.get(field)
+        columns[f"{label} risk collection status"] = risk.get("collection_status", "unknown")
+        columns[f"{label} risk collection warnings"] = "; ".join(risk.get("collection_warnings", []))
+        columns[f"{label} risk retained snapshot IDs"] = "; ".join(risk.get("retained_snapshot_ids", []))
+        columns[f"{label} risk reasons"] = "; ".join(risk.get("reasons", []))
+        columns[f"{label} risk limitations"] = "; ".join(risk.get("limitations", []))
+        for field, title in [
+            ("valid_samples", "valid samples"),
+            ("expected_samples", "expected samples"),
+            ("represented_seconds", "represented seconds"),
+            ("lifetime_coverage", "Pod-lifetime coverage"),
+            ("selected_window_coverage", "selected-window coverage"),
+            ("source", "metric source"),
+            ("cadence_seconds", "cadence seconds"),
+            ("replica", "evidence replica"),
+            ("eligible", "reduction eligible"),
+            ("partial", "evidence partial"),
+        ]:
+            columns[f"{label} {title}"] = (
+                bool(evidence.get("eligible") and risk.get("eligible"))
+                if field == "eligible"
+                else evidence.get(field)
+            )
+        columns[f"{label} evidence reasons"] = "; ".join(
+            evidence.get("reasons", [])
+            + ([] if risk.get("eligible") else risk.get("reasons", ["Required risk evidence unavailable"]))
+        ) or ("" if evidence else "Unavailable")
+    return columns
+
+
 def pool_rows(inventory, snapshots=None):
     rows = []
     for pool in inventory:
@@ -51,6 +104,33 @@ def pool_rows(inventory, snapshots=None):
     return rows
 
 
+def metric_provenance(usage):
+    usage = usage or {}
+    definition = usage.get("query_definition") or {}
+    units = usage.get("units") or {}
+    discovery = usage.get("historical_discovery") or {}
+    return {
+        "Historical discovery status": discovery.get("status", "Unknown"),
+        "Historical metadata metric": discovery.get("metadata_metric"),
+        "Historical replicas discovered": discovery.get("replicas_discovered"),
+        "Historical discovery reasons": "; ".join(discovery.get("reasons", [])),
+        "Metric source": usage.get("source", "Unknown"),
+        "Memory definition": usage.get("memory_definition", "Unknown"),
+        "Query cadence seconds": usage.get("cadence_seconds"),
+        "CPU rate window seconds": usage.get("cpu_rate_window_seconds"),
+        "CPU alignment window seconds": usage.get("cpu_alignment_window_seconds"),
+        "CPU metric": definition.get("cpu_metric", "Unknown"),
+        "Memory metric": definition.get("memory_metric", "Unknown"),
+        "CPU aggregation": definition.get("cpu_aggregation", "Unknown"),
+        "Memory aggregation": definition.get("memory_aggregation", "Unknown"),
+        "CPU unit": units.get("cpu", "Unknown"),
+        "Memory unit": units.get("memory", "Unknown"),
+        "CPU observations": usage.get("resource_status", {}).get("cpu", "unknown"),
+        "Memory observations": usage.get("resource_status", {}).get("memory", "unknown"),
+        "Fallback reason": usage.get("fallback_reason"),
+    }
+
+
 def workload_rows(snapshot, usage):
     rows = []
     for w in snapshot["workloads"]:
@@ -74,16 +154,23 @@ def workload_rows(snapshot, usage):
                 "Highest replica p99 memory GiB": metric["memory_p99"] / 1024**3
                 if metric.get("memory_p99") is not None
                 else None,
+                "Historical replicas observed": metric.get("historical_replicas_observed", 0),
+                "Historical replica UIDs": ", ".join(metric.get("historical_replica_uids", [])),
+                "Historical attribution gaps": "; ".join(usage.get("attribution_gaps", [])),
+                "Sampled memory peak GiB": metric["memory_peak"] / 1024**3
+                if metric.get("memory_peak") is not None
+                else None,
+                "Sampled memory peak replica": metric.get("memory_peak_replica"),
                 "CPU p99 replica": metric.get("cpu_replica"),
                 "Memory p99 replica": metric.get("memory_replica"),
                 "Window days": usage["days"],
                 "Metrics cutoff UTC": iso(usage["cutoff"]),
-                "Metric source": usage["source"],
-                "Memory definition": usage["memory_definition"],
+                **metric_provenance(usage),
                 "Coverage": usage["coverage"],
                 "Snapshot UTC": iso(snapshot["saved_at"]),
                 "Snapshot ID": snapshot["id"],
                 "Synthetic": snapshot["pool"].get("synthetic", False),
+                **evidence_columns(metric),
             }
         )
     return rows
@@ -116,6 +203,7 @@ def pod_rows(snapshot, search="", usage=None):
                 "CPU limit cores": p["limits"]["cpu"],
                 "Memory limit GiB": p["limits"]["memory"] / 1024**3,
                 "Window days": (usage or {}).get("days"),
+                **metric_provenance(usage),
                 "CPU latest cores": metric.get("cpu_latest"),
                 "Memory latest GiB": metric["memory_latest"] / 1024**3
                 if metric.get("memory_latest") is not None
@@ -123,6 +211,9 @@ def pod_rows(snapshot, search="", usage=None):
                 "CPU p99 cores": metric.get("cpu_p99"),
                 "Memory p99 GiB": metric["memory_p99"] / 1024**3
                 if metric.get("memory_p99") is not None
+                else None,
+                "Sampled memory peak GiB": metric["memory_peak"] / 1024**3
+                if metric.get("memory_peak") is not None
                 else None,
                 "CPU sample UTC": iso(metric.get("cpu_sample_at")),
                 "Memory sample UTC": iso(metric.get("memory_sample_at")),
@@ -134,6 +225,7 @@ def pod_rows(snapshot, search="", usage=None):
                 "Snapshot UTC": iso(snapshot["saved_at"]),
                 "Snapshot ID": snapshot["id"],
                 "Synthetic": snapshot["pool"].get("synthetic", False),
+                **evidence_columns(metric),
             }
         )
     return rows
