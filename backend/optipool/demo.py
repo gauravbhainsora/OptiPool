@@ -86,6 +86,7 @@ class DemoCollector:
             }
             workload = {
                 "id": key,
+                "controller_uid": "synthetic-controller-" + key,
                 "namespace": "commerce",
                 "kind": "Deployment",
                 "name": name,
@@ -108,6 +109,7 @@ class DemoCollector:
                         "name": pod_name,
                         "namespace": "commerce",
                         "workload": key,
+                        "controller_uid": "synthetic-controller-" + key,
                         "node": node["name"],
                         "labels": {"app": name},
                         "spec": spec,
@@ -124,7 +126,7 @@ class DemoCollector:
                             }
                         ],
                         "uid": pod_name,
-                        "created": now - 12 * 86400,
+                        "created": 1704067200,  # Stable synthetic UID lifetime (2024-01-01 UTC).
                     }
                 )
                 for k in ["cpu", "memory"]:
@@ -168,6 +170,28 @@ class DemoCollector:
             },
             "metrics": {
                 "cadence_seconds": 1800,
+                "cpu_rate_window_seconds": 300,
+                "replica_evidence": {
+                    p["uid"]: {
+                        "uid": p["uid"],
+                        "name": p["name"],
+                        "namespace": p["namespace"],
+                        "workload": p["workload"],
+                        "controller_uid": p["controller_uid"],
+                        "created": p["created"],
+                        "observed_at": now,
+                        "memberships": [
+                            {
+                                "pool_id": pool["id"],
+                                "node": p["node"],
+                                "start": p["created"],
+                                "end": now,
+                                "provenance": "explicit synthetic placement history",
+                            }
+                        ],
+                    }
+                    for p in pods
+                },
                 "cutoff": now,
                 "samples": samples,
                 "source": "Synthetic fixtures",

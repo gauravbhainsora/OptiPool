@@ -23,6 +23,11 @@ def measure(cadence, directory):
     pool = demo.discover()[0][0]
     snapshot = demo.collect(pool)
     clock = int(time.time())
+    synthetic_evidence = snapshot["metrics"]["replica_evidence"]
+    for replica in synthetic_evidence.values():
+        replica["observed_at"] = clock
+        for membership in replica["memberships"]:
+            membership["end"] = clock
     collector = object.__new__(CloudCollector)
     collector.settings = settings
     volume = {"requests": 0, "response_bytes": 0, "resource_points": 0}
@@ -51,6 +56,9 @@ def measure(cadence, directory):
         started = time.perf_counter()
         with patch("optipool.collector.time.time", return_value=clock):
             snapshot["metrics"] = collector.metrics(pool, snapshot)
+            # The benchmark models fully evidenced synthetic placement; GMP alone
+            # does not provide this contract for real cluster history.
+            snapshot["metrics"]["replica_evidence"] = synthetic_evidence
         sid = store.publish_snapshot(pool["id"], snapshot)
         refresh_seconds = time.perf_counter() - started
         before_views = volume["requests"]

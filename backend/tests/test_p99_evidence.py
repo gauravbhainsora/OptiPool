@@ -13,9 +13,24 @@ def history(snapshot, cpu_times, memory_times, created=None):
     cutoff = snapshot["metrics"]["cutoff"]
     snapshot["metrics"].update(cadence_seconds=300, cpu_rate_window_seconds=300)
     snapshot["metrics"]["samples"] = []
+    snapshot["metrics"]["replica_evidence"] = {}
     for pod in snapshot["context"]["pods"]:
         if created is not None:
             pod["created"] = created
+            pod["uid"] += "-young"
+        snapshot["metrics"]["replica_evidence"][pod["uid"]] = {
+            **pod,
+            "observed_at": cutoff,
+            "memberships": [
+                {
+                    "pool_id": snapshot["pool"]["id"],
+                    "node": pod["node"],
+                    "start": pod["created"],
+                    "end": cutoff,
+                    "provenance": "explicit synthetic placement history",
+                }
+            ],
+        }
         for t in sorted(set(cpu_times) | set(memory_times)):
             snapshot["metrics"]["samples"].append(
                 dict(
@@ -122,7 +137,15 @@ def test_historical_replica_evidence_uses_saved_membership_end_not_current_cutof
         first["uid"] = "deleted-replica"
         first["created"] = cutoff - 2 * 86400
         beginning, end = cutoff - 86400, cutoff - 72000
-        first["memberships"] = [dict(pool_id=pool["id"], start=beginning, end=end)]
+        first["memberships"] = [
+            dict(
+                pool_id=pool["id"],
+                node=first["node"],
+                start=beginning,
+                end=end,
+                provenance="explicit synthetic placement history",
+            )
+        ]
         snapshot["metrics"].update(
             cadence_seconds=300, cpu_rate_window_seconds=300, replica_evidence={first["uid"]: first}
         )

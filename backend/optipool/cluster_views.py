@@ -49,6 +49,8 @@ def combine(project, location, cluster, views, missing):
                     "namespace": workload["namespace"],
                     "kind": workload["kind"],
                     "pool_replicas": 0,
+                    "historical_replicas_observed": 0,
+                    "historical_replica_uids": set(),
                     "requested": {"cpu": 0, "memory": 0},
                     "limits": {"cpu": 0, "memory": 0},
                     "services": set(),
@@ -70,6 +72,7 @@ def combine(project, location, cluster, views, missing):
                 },
             )
             target["pool_replicas"] += workload["pool_replicas"]
+            target["historical_replica_uids"].update(metric.get("historical_replica_uids", []))
             target["services"].update(workload["services"])
             for resource in ["cpu", "memory"]:
                 target["requested"][resource] += workload["requested"][resource]
@@ -106,6 +109,8 @@ def combine(project, location, cluster, views, missing):
             )
     for target in workloads.values():
         target["services"] = sorted(target["services"])
+        target["historical_replica_uids"] = sorted(target["historical_replica_uids"])
+        target["historical_replicas_observed"] = len(target["historical_replica_uids"])
         target["memory_definitions"] = sorted(target["memory_definitions"])
         if len(target["memory_definitions"]) > 1:
             target["memory_peak"] = None
@@ -140,6 +145,8 @@ def workload_rows(scope):
             "Workload": w["name"],
             "Node pools": ", ".join(p["pool_name"] for p in w["pools"]),
             "Replicas across selected pools": w["pool_replicas"],
+            "Historical replicas observed across pool observations": w["historical_replicas_observed"],
+            "Historical replica UIDs": ", ".join(w["historical_replica_uids"]),
             "CPU requests across pools": w["requested"]["cpu"],
             "Memory requests across pools GiB": w["requested"]["memory"] / 1024**3,
             "Highest replica p99 CPU cores": w["cpu_p99"],

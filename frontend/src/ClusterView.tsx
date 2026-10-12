@@ -194,6 +194,12 @@ export default function ClusterView({
                         {w.kind === "Deployment"
                           ? cores(w.cpu_p99)
                           : "Deployments only"}
+                        {w.kind === "Deployment" ? (
+                          <small>
+                            {w.historical_replicas_observed ?? 0} historical
+                            replicas observed
+                          </small>
+                        ) : null}
                         {w.kind !== "Deployment" ? (
                           <small>Workload type: {w.kind}</small>
                         ) : !w.cpu_complete ? (

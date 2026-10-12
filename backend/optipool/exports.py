@@ -119,6 +119,9 @@ def workload_rows(snapshot, usage):
                 "Highest replica p99 memory GiB": metric["memory_p99"] / 1024**3
                 if metric.get("memory_p99") is not None
                 else None,
+                "Historical replicas observed": metric.get("historical_replicas_observed", 0),
+                "Historical replica UIDs": ", ".join(metric.get("historical_replica_uids", [])),
+                "Historical attribution gaps": "; ".join(usage.get("attribution_gaps", [])),
                 "Sampled memory peak GiB": metric["memory_peak"] / 1024**3
                 if metric.get("memory_peak") is not None
                 else None,
