@@ -74,7 +74,14 @@ def adapter(settings, saved, labels=None, usage=None, failure=None, usage_identi
 
 
 def configured(settings):
-    return Settings(**{**settings.model_dump(), "historical_metadata_metric": "optipool_pod_membership"})
+    return Settings(
+        **{
+            **settings.model_dump(),
+            "historical_metadata_metric": "optipool_pod_membership",
+            "require_cpu_risk_evidence": False,
+            "require_memory_risk_evidence": False,
+        }
+    )
 
 
 def core_app(settings, core):

@@ -1083,6 +1083,7 @@ function Workloads({
                           <MetricEvidence
                             resource="CPU"
                             evidence={m?.cpu_evidence}
+                            risk={m?.cpu_risk}
                           />
                         </details>
                       )}
@@ -1104,6 +1105,7 @@ function Workloads({
                           <MetricEvidence
                             resource="Memory"
                             evidence={m?.memory_evidence}
+                            risk={m?.memory_risk}
                           />
                         </details>
                       )}

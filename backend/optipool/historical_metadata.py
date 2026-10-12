@@ -228,6 +228,9 @@ def enrich_history(collector, pool, snapshot, metrics):
             if not record["memberships"]:
                 reasons.add("Historical replica belongs to a foreign pool")
                 continue
+            if current:
+                record["spec"] = deepcopy(current.get("spec", {}))
+                record["container_statuses"] = deepcopy(current.get("container_statuses", []))
             accepted[uid] = record
         report["replicas_discovered"] = len(accepted)
         report["replica_evidence"] = deepcopy(accepted)

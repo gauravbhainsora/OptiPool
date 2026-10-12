@@ -25,6 +25,13 @@ config:
   historical_metadata_max_requests: 400
   min_reduction_observation_seconds: 86400
   min_reduction_coverage: 0.9
+  collect_risk_metrics: false
+  risk_oom_counter_metric: ""
+  require_cpu_risk_evidence: true
+  require_memory_risk_evidence: true
+  throttling_risk_threshold: 0.10
+  min_risk_observation_seconds: 86400
+  min_risk_coverage: 0.9
   max_added_nodes: 100
   pricing_mappings: {}
 persistence:

@@ -16,6 +16,11 @@ Set `OPTIPOOL_CONFIG` to a YAML file. Default: `config.local.yaml`. `OPTIPOOL_MO
 | `min_reduction_observation_seconds` | 86,400 (24 hours) of represented valid sampling intervals before a request reduction                         |
 | `min_reduction_coverage`            | 0.9 selected-window coverage for every observed replica/resource before a reduction                          |
 | `metric_cadence_seconds`            | 300; choose 60 or 300 for GMP evaluation and native alignment; saved snapshots retain their original cadence |
+| `collect_risk_metrics` | `false`; explicit-refresh-only read of existing GMP cumulative counters, no cloud configuration changes |
+| `risk_oom_counter_metric` | Empty/unknown by default; existing cumulative Pod UID/container lifetime OOM counter with uid/container labels |
+| `require_cpu_risk_evidence`, `require_memory_risk_evidence` | Both true; absent/incomplete required evidence withholds that resource's reductions. Explicit false opt-outs are visible |
+| `throttling_risk_threshold` | 0.10; any eligible container at or above this operational count-ratio threshold withholds CPU reductions |
+| `min_risk_observation_seconds`, `min_risk_coverage` | 86400 seconds / 0.9 selected-window coverage; independent of usage policy |
 | `max_added_nodes`                   | 100; bounded greedy search, configurable up to 500                                                           |
 | `max_replicas`                      | 2,000; steady-state target, not rollout surge or HPA maximum                                                 |
 | `pricing_mappings`                  | Exact region/machine/provisioning/disk public SKU mappings; otherwise cost unavailable                       |

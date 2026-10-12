@@ -104,6 +104,8 @@ def combine(project, location, cluster, views, missing):
                 {
                     **source,
                     "replicas": workload["pool_replicas"],
+                    "cpu_risk": metric.get("cpu_risk"),
+                    "memory_risk": metric.get("memory_risk"),
                     "cpu_evidence": metric.get("cpu_evidence"),
                     "memory_evidence": metric.get("memory_evidence"),
                 }

@@ -151,6 +151,34 @@
           "type": "integer",
           "minimum": 2,
           "maximum": 2000
+        },
+        "collect_risk_metrics": {
+          "type": "boolean"
+        },
+        "risk_oom_counter_metric": {
+          "type": "string",
+          "pattern": "^$|^[a-zA-Z_:][a-zA-Z0-9_:]*$"
+        },
+        "require_cpu_risk_evidence": {
+          "type": "boolean"
+        },
+        "require_memory_risk_evidence": {
+          "type": "boolean"
+        },
+        "throttling_risk_threshold": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "min_risk_observation_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 864000
+        },
+        "min_risk_coverage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
         }
       }
     },

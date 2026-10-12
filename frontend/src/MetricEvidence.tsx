@@ -1,4 +1,5 @@
-import type { ResourceEvidence } from "./types";
+import RiskEvidence from "./RiskEvidence";
+import type { ResourceEvidence, Risk } from "./types";
 
 const percent = (v: number | null | undefined) =>
   v == null ? "unknown" : `${(v * 100).toFixed(1)}%`;
@@ -6,9 +7,11 @@ const percent = (v: number | null | undefined) =>
 export default function MetricEvidence({
   resource,
   evidence,
+  risk,
 }: {
   resource: string;
   evidence?: ResourceEvidence;
+  risk?: Risk;
 }) {
   return (
     <div className="form-hint">
@@ -49,6 +52,7 @@ export default function MetricEvidence({
       {(evidence?.reasons ?? []).map((reason) => (
         <small key={reason}>{reason}</small>
       ))}
+      <RiskEvidence resource={resource} risk={risk} />
     </div>
   );
 }
