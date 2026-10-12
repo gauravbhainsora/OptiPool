@@ -50,6 +50,8 @@ export type Metric = {
   memory_replica: string | null;
   samples: number;
   replicas_observed: number;
+  historical_replicas_observed?: number;
+  historical_replica_uids?: string[];
 };
 export type Usage = {
   pods: Record<string, PodMetric>;
@@ -266,6 +268,8 @@ export type ClusterSnapshot = {
     pools: (ScopeSource & { replicas: number })[];
     cpu_p99: number | null;
     memory_p99: number | null;
+    historical_replicas_observed?: number;
+    historical_replica_uids?: string[];
     cpu_complete: boolean;
     memory_complete: boolean;
     memory_definitions: string[];

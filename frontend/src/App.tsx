@@ -210,12 +210,16 @@ export default function App() {
   async function refresh(kind: "pool" | "inventory") {
     setError("");
     try {
-      setJob(
-        await api<Job>(
-          `/refresh/${kind}${kind === "pool" ? `?${params({ pool_id: poolId })}` : ""}`,
-          { method: "POST", body: "{}" },
-        ),
+      const next = await api<Job>(
+        `/refresh/${kind}${kind === "pool" ? `?${params({ pool_id: poolId })}` : ""}`,
+        { method: "POST", body: "{}" },
       );
+      setJob(next);
+      if (["succeeded", "failed"].includes(next.state)) {
+        await loadInventory();
+        setGeneration((v) => v + 1);
+        if (next.error) setError(next.error);
+      }
     } catch (e) {
       setError((e as Error).message);
     }
@@ -1010,7 +1014,7 @@ function Workloads({
                         {w.kind !== "Deployment"
                           ? `Workload type: ${w.kind}`
                           : m
-                            ? `${m.replicas_observed} replicas observed`
+                            ? `${m.replicas_observed} replicas observed · ${m.historical_replicas_observed ?? 0} historical`
                             : "No attributable history"}
                       </small>
                     </td>

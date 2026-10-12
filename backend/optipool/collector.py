@@ -459,7 +459,11 @@ def normalize(pool, raw, uncertainties):
             if ref["uid"] in seen or ref["uid"] not in by_uid:
                 return {
                     "kind": ref["kind"],
-                    "metadata": {"name": ref["name"], "namespace": p["metadata"]["namespace"]},
+                    "metadata": {
+                        "name": ref["name"],
+                        "uid": ref["uid"],
+                        "namespace": p["metadata"]["namespace"],
+                    },
                 }
             seen.add(ref["uid"])
             obj = by_uid[ref["uid"]]
@@ -507,6 +511,7 @@ def normalize(pool, raw, uncertainties):
             "uid": meta["uid"],
             "created": timestamp(meta["creationTimestamp"]),
             "workload": key,
+            "controller_uid": o["metadata"].get("uid"),
             "labels": meta.get("labels", {}),
             "spec": spec,
             "phase": p["status"].get("phase", "Unknown"),
@@ -541,6 +546,7 @@ def normalize(pool, raw, uncertainties):
             key,
             {
                 "id": key,
+                "controller_uid": o["metadata"].get("uid"),
                 "kind": o["kind"],
                 "name": o["metadata"]["name"],
                 "namespace": meta["namespace"],

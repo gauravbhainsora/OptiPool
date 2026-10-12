@@ -15,7 +15,11 @@ def summarize(snapshot, days, minimum=20):
     cutoff = snapshot["metrics"]["cutoff"]
     start = cutoff - days * 86400
     cadence = snapshot["metrics"].get("cadence_seconds")
-    observed = {p["uid"]: p for p in snapshot.get("context", {}).get("pods", [])}
+    selected_nodes = {n["name"] for n in snapshot.get("nodes", [])}
+    observed = {
+        p["uid"]: p for p in snapshot.get("context", {}).get("pods", []) if p.get("node") in selected_nodes
+    }
+    history = snapshot["metrics"].get("replica_evidence", {})
     replicas = defaultdict(dict)
     for sample in snapshot["metrics"].get("samples", []):
         if start <= sample["time"] <= cutoff and sample.get("attributed"):
@@ -35,15 +39,23 @@ def summarize(snapshot, days, minimum=20):
                 "cpu_replica": None,
                 "memory_replica": None,
                 "replicas_observed": 0,
+                "historical_replicas_observed": 0,
+                "historical_replica_uids": [],
                 "samples": 0,
             },
         )
         target["replicas_observed"] += 1
+        historical = replica not in observed
+        if historical:
+            target["historical_replicas_observed"] += 1
+            target["historical_replica_uids"].append(replica)
         target["samples"] += len(points)
-        created = observed.get(replica, {}).get("created") or start
+        created = observed.get(replica, history.get(replica, {})).get("created") or start
         expected = max(1, int((cutoff - max(start, created)) / cadence) + 1) if cadence else None
         metric = {
             "workload": workload,
+            "historical": historical,
+            "identity": history.get(replica),
             "samples": len(points),
             "last_sample_at": max(points),
             "expected_samples": expected,
@@ -77,4 +89,6 @@ def summarize(snapshot, days, minimum=20):
         "cadence_seconds": cadence,
         "minimum_samples": minimum,
         "warnings": snapshot["metrics"].get("warnings", []),
+        "attribution_gaps": snapshot["metrics"].get("attribution_gaps", []),
+        "historical_replicas": [{"uid": uid, **m} for uid, m in pod_metrics.items() if m["historical"]],
     }
