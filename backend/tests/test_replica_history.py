@@ -293,3 +293,19 @@ def test_unavailable_refresh_uses_one_compatible_retained_source(settings, saved
     )
     assert "Incompatible retained metric definition" in view["usage"]["attribution_gaps"]
     store.close()
+
+
+def test_samples_with_conflicting_source_or_memory_definition_are_not_relabelled(settings, saved):
+    snapshot = evidenced(saved)
+    uid = snapshot["context"]["pods"][0]["uid"]
+    for point in snapshot["metrics"]["samples"]:
+        if point["replica"] == uid:
+            point["memory"] = 100 * 1024**3
+            point["memory_definition"] = "Different memory metric"
+    store = Store(settings.database)
+    sid = store.publish_snapshot(snapshot["pool"]["id"], snapshot)
+    view = json.loads(SavedViews(store).get(snapshot["pool"]["id"], 3, sid))
+    metric = view["usage"]["pods"][uid]
+    assert metric["cpu_p99"] is not None and metric["memory_p99"] is None
+    assert "Incompatible sample source or definition" in view["usage"]["attribution_gaps"]
+    store.close()

@@ -13,6 +13,9 @@ def definition(metrics, resource):
     return {
         "source": metrics.get("source", "Unavailable"),
         "cadence_seconds": metrics.get("cadence_seconds"),
+        "cpu_alignment_window_seconds": metrics.get("cpu_alignment_window_seconds")
+        if resource == "cpu"
+        else None,
         "query": metrics.get("query_definition", {}),
         "meaning": metrics.get("memory_definition")
         if resource == "memory"
@@ -113,6 +116,13 @@ def merge_history(snapshot, previous, snapshot_id):
                     or value < 0
                 ):
                     continue
+                if sample.get("source", source_metrics.get("source")) != source_metrics.get("source") or (
+                    resource == "memory"
+                    and sample.get("memory_definition", source_metrics.get("memory_definition"))
+                    != source_metrics.get("memory_definition")
+                ):
+                    reject(uid, "Incompatible sample source or definition")
+                    continue
                 window = source_metrics.get("cpu_rate_window_seconds") if resource == "cpu" else 0
                 if (
                     window is None
@@ -152,6 +162,7 @@ def merge_history(snapshot, previous, snapshot_id):
                         "query_definition",
                         "cadence_seconds",
                         "cpu_rate_window_seconds",
+                        "cpu_alignment_window_seconds",
                         "memory_definition",
                         "units",
                     ]
@@ -217,11 +228,20 @@ def merge_history(snapshot, previous, snapshot_id):
             "query_definition",
             "cadence_seconds",
             "cpu_rate_window_seconds",
+            "cpu_alignment_window_seconds",
             "memory_definition",
             "units",
         ]:
             if key in retained_metadata:
                 metrics[key] = deepcopy(retained_metadata[key])
+        metrics["resource_status"] = {
+            resource: "available" if any(resource in point for point in points.values()) else "unavailable"
+            for resource in ["cpu", "memory"]
+        }
+        reason = metrics.get("fallback_reason")
+        metrics["fallback_reason"] = "Using retained compatible saved observations" + (
+            "; " + reason if reason else ""
+        )
     for workload, old in historical_workloads.items():
         if workload not in current_workloads:
             row = deepcopy(old)
