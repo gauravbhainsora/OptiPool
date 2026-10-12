@@ -16,6 +16,8 @@ class Settings(BaseModel):
     pricing_mappings: dict[str, dict] = Field(default_factory=dict)
     metric_cadence_seconds: Literal[60, 300] = 300
     min_metric_samples: int = Field(20, ge=1, le=100_000)
+    min_reduction_observation_seconds: int = Field(86400, ge=1, le=864000)
+    min_reduction_coverage: float = Field(0.9, ge=0, le=1)
     max_added_nodes: int = Field(100, ge=1, le=500)
     max_replicas: int = Field(2000, ge=1, le=2000)
     default_environment: str = "production"

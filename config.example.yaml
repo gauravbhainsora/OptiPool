@@ -13,6 +13,8 @@ live_validation_complete: false
 min_metric_samples: 20
 # GMP evaluation / native alignment. Supported: 60 or 300; GMP CPU still rate[5m].
 metric_cadence_seconds: 300
+min_reduction_observation_seconds: 86400
+min_reduction_coverage: 0.9
 max_added_nodes: 100
 max_replicas: 2000
 pricing_mappings: {}

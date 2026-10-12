@@ -268,7 +268,7 @@ def test_saved_source_metadata_reaches_authenticated_api_and_exports_without_rea
                 assert workload["memory_peak"] == 4 * 1024**3
                 assert workload["memory_p99"] == 1024**3
                 pod_metric = next(iter(usage["pods"].values()))
-                assert pod_metric["expected_samples"] >= 1441
+                assert pod_metric["memory_expected_samples"] >= 1441
                 assert pod_metric["memory_coverage"] < 0.14
             assert usage["query_definition"]["memory_metric"] == "container_memory_working_set_bytes"
         for table in ["workloads", "pods"]:
@@ -314,5 +314,5 @@ def test_saved_cadence_is_not_reinterpreted_after_config_change(settings):
         assert pinned["usage"]["cadence_seconds"] == 300
         assert fresh["usage"]["cadence_seconds"] == 60
         uid = next(iter(original["usage"]["pods"]))
-        assert pinned["usage"]["pods"][uid]["expected_samples"] == 289
-        assert fresh["usage"]["pods"][uid]["expected_samples"] == 1441
+        assert pinned["usage"]["pods"][uid]["memory_expected_samples"] == 289
+        assert fresh["usage"]["pods"][uid]["memory_expected_samples"] == 1441

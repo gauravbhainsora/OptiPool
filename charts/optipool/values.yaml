@@ -17,6 +17,8 @@ config:
   live_validation_complete: false
   min_metric_samples: 20
   metric_cadence_seconds: 300
+  min_reduction_observation_seconds: 86400
+  min_reduction_coverage: 0.9
   max_added_nodes: 100
   pricing_mappings: {}
 persistence:

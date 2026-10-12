@@ -46,6 +46,8 @@ export type Workload = {
 export type Metric = {
   memory_peak: number | null;
   memory_peak_replica: string | null;
+  cpu_evidence?: ResourceEvidence;
+  memory_evidence?: ResourceEvidence;
   cpu_p99: number | null;
   memory_p99: number | null;
   cpu_replica: string | null;
@@ -54,6 +56,11 @@ export type Metric = {
   replicas_observed: number;
 };
 export type Usage = {
+  reduction_policy: {
+    minimum_samples: number;
+    minimum_observation_seconds: number;
+    minimum_coverage: number;
+  };
   pods: Record<string, PodMetric>;
   days: number;
   cutoff: number;
@@ -188,6 +195,8 @@ export type Estimate = {
 };
 
 export type PodMetric = {
+  cpu_evidence?: ResourceEvidence;
+  memory_evidence?: ResourceEvidence;
   cpu_p99: number | null;
   memory_p99: number | null;
   cpu_latest: number | null;
@@ -215,6 +224,10 @@ export type NodeBudget = {
   service_rejections?: Record<string, string[]>;
 };
 export type Recommendation = {
+  cpu_evidence?: ResourceEvidence;
+  memory_evidence?: ResourceEvidence;
+  reduction_eligible: { cpu: boolean; memory: boolean };
+  reduction_reasons: { cpu: string[]; memory: string[] };
   workload_id: string;
   name: string;
   namespace: string;
@@ -227,6 +240,22 @@ export type Recommendation = {
   pool_replicas: number;
   status: string;
   warnings: string[];
+};
+
+export type ResourceEvidence = {
+  definition_basis?: string;
+  cpu_rate_window_seconds?: number | null;
+  valid_samples: number;
+  expected_samples: number | null;
+  represented_seconds: number | null;
+  lifetime_coverage: number | null;
+  selected_window_coverage: number | null;
+  replica: string | null;
+  source: string;
+  cadence_seconds: number | null;
+  eligible: boolean;
+  partial: boolean;
+  reasons: string[];
 };
 export type Comparison = {
   before: { id: string; saved_at: number };
@@ -281,7 +310,13 @@ export type ClusterSnapshot = {
     | "limits"
     | "services"
   > & {
-    pools: (ScopeSource & { replicas: number })[];
+    pools: (ScopeSource & {
+      replicas: number;
+      cpu_evidence?: ResourceEvidence;
+      memory_evidence?: ResourceEvidence;
+    })[];
+    cpu_evidence?: ResourceEvidence;
+    memory_evidence?: ResourceEvidence;
     cpu_p99: number | null;
     memory_p99: number | null;
     memory_peak: number | null;

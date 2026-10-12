@@ -2,21 +2,23 @@
 
 Set `OPTIPOOL_CONFIG` to a YAML file. Default: `config.local.yaml`. `OPTIPOOL_MODE`, `OPTIPOOL_AUTH_MODE`, `OPTIPOOL_IAP_AUDIENCE` and `OPTIPOOL_DATABASE` override their respective YAML keys. Keep private config, ADC and SQLite files out of Git. Use separate databases for demo and live modes.
 
-| Setting                    | Default / behavior                                                                                           |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `mode`                     | `demo` (synthetic) or `live` (read-only REST adapters)                                                       |
-| `auth_mode`                | `local` for loopback/private development; `iap` validates signed assertions                                  |
-| `iap_audience`             | Required with IAP; `/projects/NUMBER/global/backendServices/ID`                                              |
-| `database`                 | `data/optipool.db`; chart enforces `/data/*.db` on its PVC                                                   |
-| `project_allowlist`        | Empty means dynamic discovery of all ACTIVE projects the collector can get                                   |
-| `environment`              | Project → `project/cluster` → `project/cluster/pool`, most specific wins                                     |
-| `default_environment`      | `production`; unclassified pools are not silently treated as nonproduction                                   |
-| `live_validation_complete` | `false`; production collection is blocked until operator validation                                          |
-| `min_metric_samples`       | 20 samples per replica/resource before temporal p99 is displayed; not a statistical confidence guarantee     |
-| `metric_cadence_seconds`   | 300; choose 60 or 300 for GMP evaluation and native alignment; saved snapshots retain their original cadence |
-| `max_added_nodes`          | 100; bounded greedy search, configurable up to 500                                                           |
-| `max_replicas`             | 2,000; steady-state target, not rollout surge or HPA maximum                                                 |
-| `pricing_mappings`         | Exact region/machine/provisioning/disk public SKU mappings; otherwise cost unavailable                       |
+| Setting                             | Default / behavior                                                                                           |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `mode`                              | `demo` (synthetic) or `live` (read-only REST adapters)                                                       |
+| `auth_mode`                         | `local` for loopback/private development; `iap` validates signed assertions                                  |
+| `iap_audience`                      | Required with IAP; `/projects/NUMBER/global/backendServices/ID`                                              |
+| `database`                          | `data/optipool.db`; chart enforces `/data/*.db` on its PVC                                                   |
+| `project_allowlist`                 | Empty means dynamic discovery of all ACTIVE projects the collector can get                                   |
+| `environment`                       | Project → `project/cluster` → `project/cluster/pool`, most specific wins                                     |
+| `default_environment`               | `production`; unclassified pools are not silently treated as nonproduction                                   |
+| `live_validation_complete`          | `false`; production collection is blocked until operator validation                                          |
+| `min_metric_samples`                | 20 samples per replica/resource before temporal p99 is displayed; not a statistical confidence guarantee     |
+| `min_reduction_observation_seconds` | 86,400 (24 hours) of represented valid sampling intervals before a request reduction                         |
+| `min_reduction_coverage`            | 0.9 selected-window coverage for every observed replica/resource before a reduction                          |
+| `metric_cadence_seconds`            | 300; choose 60 or 300 for GMP evaluation and native alignment; saved snapshots retain their original cadence |
+| `max_added_nodes`                   | 100; bounded greedy search, configurable up to 500                                                           |
+| `max_replicas`                      | 2,000; steady-state target, not rollout surge or HPA maximum                                                 |
+| `pricing_mappings`                  | Exact region/machine/provisioning/disk public SKU mappings; otherwise cost unavailable                       |
 
 ## Local live mode
 
@@ -88,3 +90,9 @@ pricing_mappings:
 ```
 
 This is a structural example, not verified pricing. SKU IDs/units must match the current [public Billing catalog](https://docs.cloud.google.com/billing/docs/how-to/get-pricing-information-api). Missing/unsupported tiers, units, regions or mappings make prices unavailable. Prices are saved only on explicit pool collection. Spot resources cannot use a resource-based commitment mapping. Existing CUD coverage, negotiation, credits and billed savings are outside scope.
+
+## Request reduction evidence
+
+A sampled p99 may remain visible when reduction evidence is insufficient. CPU and memory gates are independent: sample minimum, represented interval duration and selected-window coverage must all meet policy for every replica. Missing or excluded replicas make the observed workload maximum partial and prevent reductions. Unknown cadence, Pod lifetime or CPU rate-window semantics never imply eligibility. A complete two-hour Pod lifetime is still only two hours of a ten-day metrics window. Represented duration is the union of valid cadence intervals clipped to creation, CPU rate-window eligibility, the selected window and evidenced pool memberships; gaps do not count. Expected counts use each resource’s eligible lifetime/membership interval. Historical ended memberships stop at their saved endpoint.
+
+Legacy GMP and native collector CPU rate definitions are inferred as five minutes and explicitly labelled as inferred; legacy synthetic fixtures use a zero warmup. Other missing definitions remain unknown. The 24-hour/90% defaults are operational policy rather than a statistical confidence guarantee. CPU smoothing, sampled memory peaks and unobserved deleted replicas remain limits. Policy keys participate in the immutable response cache. Combined pool views retain per-pool policy, cutoff and winner provenance; their observations need not be simultaneous. OOM/restart floors, memory peak floors and heterogeneous-template review still apply. Inventory and capacity planning remain available without monitoring. Reads and exports never collect cloud data.

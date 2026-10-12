@@ -60,6 +60,13 @@ def measure(cadence, directory):
             started = time.perf_counter()
             content = views.get(pool["id"], days, sid)
             cold.append(time.perf_counter() - started)
+            view = json.loads(content)
+            expected_samples = (days * 86400 // cadence + 1) * len(snapshot["context"]["pods"])
+            assert sum(m["memory_samples"] for m in view["usage"]["pods"].values()) == expected_samples
+            assert all(
+                m["memory_p99"] > 0 and m["memory_peak"] >= m["memory_p99"]
+                for m in view["usage"]["workloads"].values()
+            )
         warm = []
         for _ in range(100):
             started = time.perf_counter()

@@ -1,6 +1,7 @@
 import { BudgetBar, cores, date, gib, Notice } from "./components";
 import ClusterExportButtons from "./ClusterExportButtons";
 import PodTable from "./PodTable";
+import MetricEvidence from "./MetricEvidence";
 import type { ClusterSnapshot } from "./types";
 
 export default function ClusterView({
@@ -198,6 +199,22 @@ export default function ClusterView({
                         ) : !w.cpu_complete ? (
                           <small>Partial or missing coverage</small>
                         ) : null}
+                        {w.kind === "Deployment" && (
+                          <details>
+                            <summary>CPU evidence by pool</summary>
+                            {w.pools.map((p) => (
+                              <div key={p.pool_id}>
+                                <small>
+                                  {p.pool_name} · cutoff {date(p.cutoff)}
+                                </small>
+                                <MetricEvidence
+                                  resource="CPU"
+                                  evidence={p.cpu_evidence}
+                                />
+                              </div>
+                            ))}
+                          </details>
+                        )}
                       </td>
                       <td>
                         {w.kind === "Deployment"
@@ -212,6 +229,22 @@ export default function ClusterView({
                               : "Partial or missing coverage"}
                           </small>
                         ) : null}
+                        {w.kind === "Deployment" && (
+                          <details>
+                            <summary>Memory evidence by pool</summary>
+                            {w.pools.map((p) => (
+                              <div key={p.pool_id}>
+                                <small>
+                                  {p.pool_name} · cutoff {date(p.cutoff)}
+                                </small>
+                                <MetricEvidence
+                                  resource="Memory"
+                                  evidence={p.memory_evidence}
+                                />
+                              </div>
+                            ))}
+                          </details>
+                        )}
                       </td>
                       <td title={w.memory_peak_replica ?? undefined}>
                         {gib(w.memory_peak)}

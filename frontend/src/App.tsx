@@ -28,6 +28,7 @@ import {
 } from "./components";
 import Estimator from "./Estimator";
 import PodTable from "./PodTable";
+import MetricEvidence from "./MetricEvidence";
 import RightSizing from "./RightSizing";
 import SnapshotCompare from "./SnapshotCompare";
 import PoolDesigner from "./PoolDesigner";
@@ -1055,6 +1056,15 @@ function Workloads({
                             ? `${m.replicas_observed} replicas observed`
                             : "No attributable history"}
                       </small>
+                      {w.kind === "Deployment" && (
+                        <details>
+                          <summary>CPU evidence</summary>
+                          <MetricEvidence
+                            resource="CPU"
+                            evidence={m?.cpu_evidence}
+                          />
+                        </details>
+                      )}
                     </td>
                     <td title={m?.memory_replica ?? undefined}>
                       {w.kind === "Deployment"
@@ -1067,6 +1077,15 @@ function Workloads({
                             ? `${m.samples.toLocaleString()} samples`
                             : `Minimum ${snapshot.usage.minimum_samples} samples`}
                       </small>
+                      {w.kind === "Deployment" && (
+                        <details>
+                          <summary>Memory evidence</summary>
+                          <MetricEvidence
+                            resource="Memory"
+                            evidence={m?.memory_evidence}
+                          />
+                        </details>
+                      )}
                     </td>
                     <td title={m?.memory_peak_replica ?? undefined}>
                       {w.kind === "Deployment"

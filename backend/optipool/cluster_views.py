@@ -2,7 +2,7 @@
 
 import json
 
-from .exports import iso, metric_provenance
+from .exports import evidence_columns, iso, metric_provenance
 
 
 def combine(project, location, cluster, views, missing):
@@ -18,6 +18,8 @@ def combine(project, location, cluster, views, missing):
             "source": usage["source"],
             "memory_definition": usage["memory_definition"],
             "coverage": usage["coverage"],
+            "cadence_seconds": usage.get("cadence_seconds"),
+            "reduction_policy": usage.get("reduction_policy"),
             "synthetic": pool.get("synthetic", False),
             **{
                 key: usage.get(key)
@@ -63,6 +65,8 @@ def combine(project, location, cluster, views, missing):
                     "memory_replica": None,
                     "cpu_pool": None,
                     "memory_pool": None,
+                    "cpu_evidence": None,
+                    "memory_evidence": None,
                 },
             )
             target["pool_replicas"] += workload["pool_replicas"]
@@ -71,11 +75,20 @@ def combine(project, location, cluster, views, missing):
                 target["requested"][resource] += workload["requested"][resource]
                 target["limits"][resource] += workload["limits"][resource]
                 p99 = metric.get(resource + "_p99")
-                target[resource + "_complete"] &= p99 is not None
+                target[resource + "_complete"] &= p99 is not None and not (
+                    metric.get(resource + "_evidence") or {}
+                ).get("partial", False)
                 if p99 is not None and (target[resource + "_p99"] is None or p99 > target[resource + "_p99"]):
                     target[resource + "_p99"] = p99
                     target[resource + "_replica"] = metric.get(resource + "_replica")
                     target[resource + "_pool"] = pool["name"]
+                    target[resource + "_evidence"] = {
+                        **(metric.get(resource + "_evidence") or {}),
+                        "pool_id": pool["id"],
+                        "pool_name": pool["name"],
+                        "snapshot_id": value["id"],
+                        "cutoff": usage["cutoff"],
+                    }
             peak = metric.get("memory_peak")
             if peak is not None and (target["memory_peak"] is None or peak > target["memory_peak"]):
                 target["memory_peak"] = peak
@@ -83,7 +96,14 @@ def combine(project, location, cluster, views, missing):
                 target["memory_peak_pool"] = pool["name"]
             if metric.get("memory_p99") is not None or peak is not None:
                 target["memory_definitions"].add(usage["memory_definition"])
-            target["pools"].append({**source, "replicas": workload["pool_replicas"]})
+            target["pools"].append(
+                {
+                    **source,
+                    "replicas": workload["pool_replicas"],
+                    "cpu_evidence": metric.get("cpu_evidence"),
+                    "memory_evidence": metric.get("memory_evidence"),
+                }
+            )
     for target in workloads.values():
         target["services"] = sorted(target["services"])
         target["memory_definitions"] = sorted(target["memory_definitions"])
@@ -95,6 +115,7 @@ def combine(project, location, cluster, views, missing):
             target["memory_replica"] = None
             target["memory_pool"] = None
             target["memory_complete"] = False
+            target["memory_evidence"] = None
     return {
         "project": project,
         "location": location,
@@ -146,6 +167,8 @@ def workload_rows(scope):
             "Memory p99 pool": w["memory_pool"],
             "Memory p99 replica": w["memory_replica"],
             "Synthetic": any(p["synthetic"] for p in w["pools"]),
+            **evidence_columns(w),
+            "Evidence per pool": json.dumps(w["pools"], separators=(",", ":")),
         }
         for w in scope["workloads"]
     ]
