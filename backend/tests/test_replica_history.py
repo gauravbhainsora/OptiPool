@@ -272,7 +272,16 @@ def test_unknown_cpu_rate_window_does_not_infer_lifetime_attribution(settings, s
 
 def test_unavailable_refresh_uses_one_compatible_retained_source(settings, saved):
     first = evidenced(saved)
-    first["metrics"].update(source="GMP cAdvisor", memory_definition="Working set")
+    first["metrics"].update(
+        source="GMP cAdvisor",
+        memory_definition="Working set",
+        query_definition={
+            "cpu_metric": "container_cpu_usage_seconds_total",
+            "cpu_aggregation": "sum of rate[5m]",
+        },
+        units={"cpu": "cores", "memory": "bytes"},
+        cpu_alignment_window_seconds=None,
+    )
     for point in first["metrics"]["samples"]:
         point.pop("memory")
     store = Store(settings.database)
@@ -283,11 +292,29 @@ def test_unavailable_refresh_uses_one_compatible_retained_source(settings, saved
         point.pop("cpu")
     store.publish_snapshot(second["pool"]["id"], second)
     unavailable = evidenced(saved)
-    unavailable["metrics"].update(source="Unavailable", memory_definition="Unavailable", samples=[])
+    unavailable["metrics"].update(
+        source="Unavailable",
+        memory_definition="Unavailable",
+        samples=[],
+        query_definition=None,
+        units=None,
+        cpu_rate_window_seconds=None,
+        cadence_seconds=None,
+        resource_status={"cpu": "unavailable", "memory": "unavailable"},
+        fallback_reason="Fresh monitoring reads failed",
+    )
+    unavailable["metrics"]["warnings"].append("Fresh monitoring reads failed")
     sid = store.publish_snapshot(unavailable["pool"]["id"], unavailable)
     view = json.loads(SavedViews(store).get(unavailable["pool"]["id"], 3, sid))
     assert view["usage"]["source"] == "GMP cAdvisor"
     assert view["usage"]["memory_definition"] == "Working set"
+    assert view["usage"]["query_definition"] == first["metrics"]["query_definition"]
+    assert view["usage"]["units"] == {"cpu": "cores", "memory": "bytes"}
+    assert view["usage"]["cpu_rate_window_seconds"] == 300
+    assert view["usage"]["cadence_seconds"] == 1800
+    assert view["usage"]["resource_status"] == {"cpu": "available", "memory": "unavailable"}
+    assert "Fresh monitoring reads failed" in view["usage"]["fallback_reason"]
+    assert "Fresh monitoring reads failed" in view["usage"]["warnings"]
     assert all(
         m["cpu_p99"] is not None and m["memory_p99"] is None for m in view["usage"]["workloads"].values()
     )
@@ -308,4 +335,27 @@ def test_samples_with_conflicting_source_or_memory_definition_are_not_relabelled
     metric = view["usage"]["pods"][uid]
     assert metric["cpu_p99"] is not None and metric["memory_p99"] is None
     assert "Incompatible sample source or definition" in view["usage"]["attribution_gaps"]
+    store.close()
+
+
+def test_retained_samples_with_changed_units_are_excluded_visibly(settings, saved):
+    first = evidenced(saved)
+    deleted = first["context"]["pods"][0]["uid"]
+    first["metrics"]["units"] = {"cpu": "millicores", "memory": "bytes"}
+    for sample in first["metrics"]["samples"]:
+        sample["cpu"] = 10000 if sample["replica"] == deleted else 2
+    store = Store(settings.database)
+    store.publish_snapshot(first["pool"]["id"], first)
+    second = evidenced(saved)
+    second["metrics"]["units"] = {"cpu": "cores", "memory": "bytes"}
+    second["context"]["pods"] = [p for p in second["context"]["pods"] if p["uid"] != deleted]
+    second["metrics"]["samples"] = [p for p in second["metrics"]["samples"] if p["replica"] != deleted]
+    second["metrics"]["replica_evidence"].pop(deleted)
+    for sample in second["metrics"]["samples"]:
+        sample["cpu"] = 2
+    sid = store.publish_snapshot(second["pool"]["id"], second)
+    view = json.loads(SavedViews(store).get(second["pool"]["id"], 3, sid))
+    metric = view["usage"]["workloads"][second["workloads"][0]["id"]]
+    assert metric["cpu_p99"] == 2
+    assert "Incompatible retained metric definition" in view["usage"]["attribution_gaps"]
     store.close()

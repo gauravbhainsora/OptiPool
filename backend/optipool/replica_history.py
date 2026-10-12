@@ -12,6 +12,7 @@ from copy import deepcopy
 def definition(metrics, resource):
     return {
         "source": metrics.get("source", "Unavailable"),
+        "unit": (metrics.get("units") or {}).get(resource),
         "cadence_seconds": metrics.get("cadence_seconds"),
         "cpu_alignment_window_seconds": metrics.get("cpu_alignment_window_seconds")
         if resource == "cpu"

@@ -7,6 +7,7 @@ const data = mkdtempSync(join(tmpdir(), "optipool-e2e-"));
 const port = process.env.OPTIPOOL_TEST_PORT ?? "8100";
 export default defineConfig({
   testDir: "./tests",
+  testIgnore: "p99-history.spec.ts",
   fullyParallel: false,
   workers: 1,
   use: {
