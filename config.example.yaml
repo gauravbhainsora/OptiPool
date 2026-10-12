@@ -11,6 +11,8 @@ environment:
 default_environment: production
 live_validation_complete: false
 min_metric_samples: 20
+min_reduction_observation_seconds: 86400
+min_reduction_coverage: 0.9
 max_added_nodes: 100
 max_replicas: 2000
 pricing_mappings: {}

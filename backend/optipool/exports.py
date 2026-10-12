@@ -12,6 +12,29 @@ def iso(value):
     return datetime.fromtimestamp(value, UTC).isoformat() if value else "Not fetched"
 
 
+def evidence_columns(metric):
+    columns = {}
+    for resource, label in [("cpu", "CPU"), ("memory", "Memory")]:
+        evidence = metric.get(resource + "_evidence") or {}
+        for field, title in [
+            ("valid_samples", "valid samples"),
+            ("expected_samples", "expected samples"),
+            ("represented_seconds", "represented seconds"),
+            ("lifetime_coverage", "Pod-lifetime coverage"),
+            ("selected_window_coverage", "selected-window coverage"),
+            ("source", "metric source"),
+            ("cadence_seconds", "cadence seconds"),
+            ("replica", "evidence replica"),
+            ("eligible", "reduction eligible"),
+            ("partial", "evidence partial"),
+        ]:
+            columns[f"{label} {title}"] = evidence.get(field)
+        columns[f"{label} evidence reasons"] = "; ".join(evidence.get("reasons", [])) or (
+            "" if evidence else "Unavailable"
+        )
+    return columns
+
+
 def pool_rows(inventory, snapshots=None):
     rows = []
     for pool in inventory:
@@ -105,6 +128,7 @@ def workload_rows(snapshot, usage):
                 "Snapshot UTC": iso(snapshot["saved_at"]),
                 "Snapshot ID": snapshot["id"],
                 "Synthetic": snapshot["pool"].get("synthetic", False),
+                **evidence_columns(metric),
             }
         )
     return rows
@@ -156,6 +180,7 @@ def pod_rows(snapshot, search="", usage=None):
                 "Snapshot UTC": iso(snapshot["saved_at"]),
                 "Snapshot ID": snapshot["id"],
                 "Synthetic": snapshot["pool"].get("synthetic", False),
+                **evidence_columns(metric),
             }
         )
     return rows
