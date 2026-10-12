@@ -968,6 +968,10 @@ function Workloads({
           observations: {snapshot.usage.resource_status.memory}
         </span>
       </div>
+      <p className="muted">
+        Sampled peaks can miss short spikes. Finer query cadence does not remove
+        the CPU rate window.
+      </p>
       {snapshot.usage.fallback_reason && (
         <Notice>{snapshot.usage.fallback_reason}</Notice>
       )}
@@ -1004,6 +1008,7 @@ function Workloads({
                 <th>Pool requests</th>
                 <th>Highest-replica p99 CPU</th>
                 <th>Highest-replica p99 memory</th>
+                <th>Sampled memory peak</th>
                 <th>Services</th>
               </tr>
             </thead>
@@ -1062,6 +1067,12 @@ function Workloads({
                             ? `${m.samples.toLocaleString()} samples`
                             : `Minimum ${snapshot.usage.minimum_samples} samples`}
                       </small>
+                    </td>
+                    <td title={m?.memory_peak_replica ?? undefined}>
+                      {w.kind === "Deployment"
+                        ? gib(m?.memory_peak)
+                        : "Inspect Pod metrics"}
+                      <small>Highest observed replica sample</small>
                     </td>
                     <td>
                       {w.services.length ? (

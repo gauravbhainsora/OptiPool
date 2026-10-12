@@ -344,3 +344,29 @@ def test_replica_window_excludes_incompatible_sample_memory_definition(saved):
     usage = summarize(saved, 1)
     assert usage["pods"][uid]["memory_p99"] == 100
     assert any("incompatible" in warning for warning in usage["warnings"])
+
+
+def test_sampled_memory_burst_is_separate_from_p99_and_preserved_as_historical_floor(saved):
+    pod = saved["context"]["pods"][0]
+    cutoff = saved["metrics"]["cutoff"]
+    saved["metrics"].update(
+        cadence_seconds=60,
+        samples=[
+            {
+                "time": cutoff - i * 60,
+                "replica": "deleted-replica",
+                "workload": pod["workload"],
+                "attributed": True,
+                "cpu": 0.1,
+                "memory": (4 if i == 1 else 1) * 1024**3,
+            }
+            for i in range(201)
+        ],
+    )
+    usage = summarize(saved, 1)
+    metric = usage["workloads"][pod["workload"]]
+    assert metric["memory_p99"] == 1024**3
+    assert metric["memory_peak"] == 4 * 1024**3
+    assert metric["memory_peak_replica"] == "deleted-replica"
+    row = next(r for r in recommend(saved, usage)["rows"] if r["workload_id"] == pod["workload"])
+    assert row["proposed"]["memory"] >= 4 * 1024**3

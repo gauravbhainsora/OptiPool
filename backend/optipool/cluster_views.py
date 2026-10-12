@@ -53,6 +53,9 @@ def combine(project, location, cluster, views, missing):
                     "pools": [],
                     "cpu_p99": None,
                     "memory_p99": None,
+                    "memory_peak": None,
+                    "memory_peak_replica": None,
+                    "memory_peak_pool": None,
                     "cpu_complete": True,
                     "memory_complete": True,
                     "memory_definitions": set(),
@@ -73,13 +76,21 @@ def combine(project, location, cluster, views, missing):
                     target[resource + "_p99"] = p99
                     target[resource + "_replica"] = metric.get(resource + "_replica")
                     target[resource + "_pool"] = pool["name"]
-            if metric.get("memory_p99") is not None:
+            peak = metric.get("memory_peak")
+            if peak is not None and (target["memory_peak"] is None or peak > target["memory_peak"]):
+                target["memory_peak"] = peak
+                target["memory_peak_replica"] = metric.get("memory_peak_replica")
+                target["memory_peak_pool"] = pool["name"]
+            if metric.get("memory_p99") is not None or peak is not None:
                 target["memory_definitions"].add(usage["memory_definition"])
             target["pools"].append({**source, "replicas": workload["pool_replicas"]})
     for target in workloads.values():
         target["services"] = sorted(target["services"])
         target["memory_definitions"] = sorted(target["memory_definitions"])
         if len(target["memory_definitions"]) > 1:
+            target["memory_peak"] = None
+            target["memory_peak_replica"] = None
+            target["memory_peak_pool"] = None
             target["memory_p99"] = None
             target["memory_replica"] = None
             target["memory_pool"] = None
@@ -114,6 +125,9 @@ def workload_rows(scope):
             "Highest replica p99 memory GiB": w["memory_p99"] / 1024**3
             if w["memory_p99"] is not None
             else None,
+            "Sampled memory peak GiB": w["memory_peak"] / 1024**3 if w["memory_peak"] is not None else None,
+            "Sampled memory peak replica": w["memory_peak_replica"],
+            "Sampled memory peak pool": w["memory_peak_pool"],
             "CPU coverage complete": w["cpu_complete"],
             "Memory coverage complete": w["memory_complete"],
             "Window days per pool": scope["days"],

@@ -44,6 +44,8 @@ export type Workload = {
   spec: Record<string, unknown>;
 };
 export type Metric = {
+  memory_peak: number | null;
+  memory_peak_replica: string | null;
   cpu_p99: number | null;
   memory_p99: number | null;
   cpu_replica: string | null;
@@ -282,6 +284,9 @@ export type ClusterSnapshot = {
     pools: (ScopeSource & { replicas: number })[];
     cpu_p99: number | null;
     memory_p99: number | null;
+    memory_peak: number | null;
+    memory_peak_replica: string | null;
+    memory_peak_pool: string | null;
     cpu_complete: boolean;
     memory_complete: boolean;
     memory_definitions: string[];

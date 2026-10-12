@@ -164,6 +164,7 @@ export default function ClusterView({
                     <th>Combined requests</th>
                     <th>Highest-replica p99 CPU</th>
                     <th>Highest-replica p99 memory</th>
+                    <th>Sampled memory peak</th>
                     <th>Services</th>
                   </tr>
                 </thead>
@@ -211,6 +212,12 @@ export default function ClusterView({
                               : "Partial or missing coverage"}
                           </small>
                         ) : null}
+                      </td>
+                      <td title={w.memory_peak_replica ?? undefined}>
+                        {gib(w.memory_peak)}
+                        <small>
+                          {w.memory_peak_pool ?? "No attributable sample"}
+                        </small>
                       </td>
                       <td>{w.services.join(", ") || "None associated"}</td>
                     </tr>
