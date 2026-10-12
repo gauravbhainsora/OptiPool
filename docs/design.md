@@ -27,7 +27,7 @@ The working checkout is `/Users/gaurav/Projects/OptiPool`, with remote `git@gith
 - Account for existing workloads' current desired replicas, including Pending Pods that could compete for the selected pool. Report outstanding demand separately and surface placement uncertainty instead of an unconditional fit.
 - Report additional-node requirements and estimated costs even when they exceed the pool's configured autoscaler maximum. Show the permitted growth and required configuration change explicitly; do not change cloud resources.
 - Show only highest-replica p99 CPU and memory on each Deployment row, scoped to replicas that ran on the selected pool during the selected window. Compute each replica's temporal p99 over the selected window, then independently take the maximum CPU p99 and maximum memory p99 across observed replicas; the two maxima may come from different replicas. Label the pool scope and incomplete historical attribution. Do not display aggregate Deployment p99.
-- Prefer working-set memory when available, with clearly labelled non-evictable memory as fallback. Record the metric source with each snapshot and keep its definition consistent throughout the selected window. Detailed coverage thresholds remain open.
+- Prefer working-set memory when available, with clearly labelled non-evictable memory as fallback. Record the metric source with each snapshot and keep its definition consistent throughout the selected window. Reduction eligibility independently requires at least 20 valid samples, 24 hours represented and 90% selected-window coverage per replica/resource by default; all thresholds are configurable operational policy, not confidence guarantees.
 - Each manual pool refresh collects up to ten days of available monitoring history. A 1–10 day slider selects trailing usage data ending at the saved metrics cutoff, reading only the database. Configuration and scheduling estimates remain tied to the selected saved inventory snapshot. The slider controls usage charts and p99; cost estimates remain hourly and monthly, independent of the selected day window.
 - Include observed CPU/memory usage when monitoring data is available. Monitoring is optional enrichment; missing metrics must be visible and must not prevent request-based estimates from a complete core snapshot.
 - Show on-demand and three-year resource-based CUD cost comparisons, initially in USD with hourly and 730-hour monthly estimates. The CUD scenario assumes a hypothetical commitment fully covering eligible additional resources, using matching public commitment prices with the commitment obligation visible and other components priced separately. It does not assume coverage from existing commitments. Compute flexible CUDs are outside the requested comparison.
@@ -74,7 +74,7 @@ The following defaults make the agreed requirements concrete. Implementation use
 - Use health/readiness checks, structured logs, refresh/estimate audit records, durable job status, consistent off-volume backups, and a restore test. An interrupted job must not publish partial observations.
 - Measure initial node/Pod/series counts and refresh concurrency before sizing disk, memory, retention representation, and the supported simulation bound. Avoid duplicating identical ten-day histories for every refresh while preserving reproducibility.
 
-Implementation note: v0.1 compresses complete metrics with each snapshot and does not yet deduplicate repeated ten-day histories. The sizing/retention gate must account for this explicitly. Exact live public SKU mappings are operator-reviewed; missing mappings yield unavailable costs. Deleted-Pod historical ownership is labelled partial rather than inferred.
+Implementation note: snapshots embed compressed, self-contained ten-day histories. Compatible replica/resource/timestamp points are deduplicated within each snapshot, with newest compatible values and all origins retained; payloads remain duplicated across snapshots. Measure retention/storage and cold-view costs before rollout. Exact live public SKU mappings remain operator-reviewed. Historical ownership is accepted only through time-bounded evidence, never inferred from current names.
 
 ## Design tree
 
@@ -89,7 +89,7 @@ Implementation note: v0.1 compresses complete metrics with each snapshot and doe
   - Settled: publish complete snapshots only; preserve old data on failure; allow estimates with visible collection time and age.
   - Settled: 30-day snapshot/estimate history and an explicit inventory-discovery action.
   - Settled: collect available ten-day history on manual refresh; the slider reads saved metrics with its window anchored to the saved cutoff.
-  - Open: metrics coverage and behavior when less than the selected duration is available.
+  - Settled: expose independent sample counts, represented cadence intervals, lifetime and selected-window coverage; show valid partial p99 but withhold unsupported reductions.
   - Settled: collect and attach supporting cluster context to the selected pool snapshot; other pool snapshots remain unchanged.
   - Downstream: historical workload attribution, concurrent refreshes, handling history required by retained estimates.
 - Capacity estimation
@@ -114,7 +114,7 @@ Implementation note: v0.1 compresses complete metrics with each snapshot and doe
   - Settled: pool/node/workload views, including p99 CPU and memory and optional observed-usage data.
   - Settled: display only highest-replica CPU and memory p99 on Deployment rows, independently calculated over the selected metrics window.
   - Settled: selected-pool replica scope; prefer working-set memory, with labelled non-evictable fallback and a consistent source throughout each window.
-  - Open: data-coverage rules.
+  - Settled: configurable 20-sample / 24-hour / 90% per-resource reduction gates and required historical risk evidence; missing evidence remains unknown.
   - Settled: SQLite, a single database-owning instance, durable storage, queued writes, and brief maintenance/restart downtime.
   - Settled: existing GKE cluster with persistent storage and a local development setup.
   - Settled: 20 simultaneous users, cached interactions within two seconds and ordinary estimates within ten seconds at p95, tested against twice the initial inventory.
@@ -129,7 +129,7 @@ Implementation note: v0.1 compresses complete metrics with each snapshot and doe
 | Nodes | Name, zone, readiness, schedulability, allocatable CPU/memory, requests, limits, remaining request budget, Pod count, labels and taints |
 | Workloads | Namespace, controller kind/name, associated Services, desired/running/pending replicas, replicas on selected pool, per-replica and total requests/limits, placement rules |
 
-Clearly distinguish cluster-wide workload totals from the portion on the selected pool. Deployment rows show only highest-replica CPU and memory p99 for replicas that ran on the selected pool during the selected metrics window; do not show aggregate Deployment p99. Historical attribution gaps must be labelled. Prefer working-set memory with a clearly labelled non-evictable fallback, consistently applied throughout each window. Detailed coverage thresholds remain open. Usage charts may be shown where metric data and attribution are available.
+Clearly distinguish cluster-wide workload totals from the portion on the selected pool. Deployment rows show only highest-replica CPU and memory p99 for replicas that ran on the selected pool during the selected metrics window; do not show aggregate Deployment p99. Historical attribution gaps must be labelled. Prefer working-set memory with a clearly labelled non-evictable fallback, consistently applied throughout each window. Reduction eligibility independently requires at least 20 valid samples, 24 hours represented and 90% selected-window coverage per replica/resource by default; all thresholds are configurable operational policy, not confidence guarantees. Usage charts may be shown where metric data and attribution are available.
 
 ## Planned data sources and collection flow
 
@@ -182,3 +182,16 @@ Existing outstanding demand is evaluated before declaring capacity available for
 - Production browser access validates the IAP identity. Collection uses the service account with appropriate project and cluster read permissions; saved-data viewing does not require a viewer's personal gcloud login.
 - Validate the full collection-to-dashboard-to-estimate flow on one non-production pool, then run the agreed performance benchmark before enabling production access.
 - Complete the open-source and versioned Helm release checks in [release-readiness.md](./release-readiness.md) before the first code push.
+
+
+## Highest-replica p99 evidence implementation (unreleased)
+
+All six approved tickets #2–#7 are implemented locally; review fixes and final integration verification/publication are tracked in BUILD_PLAN.md. Public release 0.2.0 is unchanged. A selected-pool refresh validates isolated GMP/native candidates; native queries and replies must match project, monitored resource type, location, cluster, namespace, captured Pod lifetime, real container identity and metric/memory definition. Ordinary, init and ephemeral usage can contribute where attributable; required runtime risk evidence instead covers ordinary containers and restartable init sidecars. Explicit foreign Pod UID labels are rejected for risk counters too.
+
+New snapshots retain compatible prior replica history and optional configured upstream joined interval evidence. Identity requires Pod/controller UIDs, lifetime and supported pool/node intervals; CPU needs its complete averaging window inside the interval. Known attribution failures carry workload, replica UID and resource details. They withhold only affected resource/workload reductions; an unknown outage remains a conservative global gap. Saved data, dashboard details and pinned CSV/XLSX expose current versus historical replicas, source, cadence, independent evidence and sampled memory peaks.
+
+Query cadence supports 60/300 seconds with 300 as the default. GMP CPU remains a five-minute rate at either step; native CPU rate and non-evictable memory mean align to the selected cadence. A sampled memory maximum cannot guarantee an instantaneous spike was captured. Upstream metadata is disabled unless `historical_metadata_metric` names an existing joined optipool-membership-v1 source. Defaults are ten-day lookback, 300-second metadata step, 200 replicas and 400 source requests; its exact label/proof requirements are in [historical-metadata.md](historical-metadata.md).
+
+Risk-counter collection is independently opt-in (`collect_risk_metrics: false` by default). Required CPU and memory risk evidence both default true; without configured/retained sufficient risk, their reductions are withheld. Explicit policy opt-outs preserve advisory use with unknown risk labelled. Reset-aware increments are evaluated per eligible container before aggregate counts; the any-container throttling threshold defaults to 0.10, with 24 hours represented and 90% selected-window risk coverage. OOM requires a configured existing cumulative Pod UID/container lifetime counter; restart counters and captured current/last termination states are supplementary, not complete event coverage. Missing/Unavailable fresh risk collection recovers one compatible retained definition within accepted identities/intervals and discloses the failure and retained snapshot IDs; prior adverse evidence still prevents reductions even under an optional-risk policy.
+
+Pool publications serialize history capture/staging for that pool. Decoding, merging and compression run outside the shared SQLite connection lock; the final three payload writes share a short atomic transaction. Reads and other pools remain available while staging. No schema-version change is required; old JSON shapes remain readable with unknown missing fields, but older applications do not implement the new reduction policy. This is shape compatibility, not a claim of equivalent behavior after rollback. CI runs the default, retained-history and upstream browser journeys. Real GCP source availability, interval-pipeline correctness, IAP/networking and inventory-scale performance remain operator acceptance work; no cloud configuration or release is part of these tickets.

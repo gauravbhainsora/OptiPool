@@ -45,3 +45,10 @@ def selected_pods(snapshot):
         for p in snapshot.get("context", {}).get("pods", [])
         if p.get("node") in names or p.get("uid") in pending_uids
     ]
+
+
+def steady_containers(spec):
+    """Containers whose runtime risk evidence needs a full Pod-lifetime denominator."""
+    return list(spec.get("containers", [])) + [
+        c for c in spec.get("initContainers", []) if c.get("restartPolicy") == "Always"
+    ]

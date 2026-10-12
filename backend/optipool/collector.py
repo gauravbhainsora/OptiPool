@@ -19,6 +19,7 @@ from google.auth.transport.requests import AuthorizedSession, Request
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from .pods import steady_containers
 from .resources import node_eligible, pod_resources, quantity
 
 
@@ -451,12 +452,10 @@ class CloudCollector:
                     if not pod:
                         continue
                     container = labels.get("container")
-                    eligible = [c["name"] for c in pod["spec"].get("containers", [])] + [
-                        c["name"]
-                        for c in pod["spec"].get("initContainers", [])
-                        if c.get("restartPolicy") == "Always"
-                    ]
+                    eligible = [c["name"] for c in steady_containers(pod["spec"])]
                     if container not in eligible:
+                        continue
+                    if any(label in labels and labels[label] != pod["uid"] for label in ["uid", "pod_uid"]):
                         continue
                     if kind in {"oom_events", "restarts"}:
                         if labels.get("uid") != pod["uid"]:
@@ -550,6 +549,8 @@ class CloudCollector:
         ]:
             filter_text = (
                 f'metric.type="kubernetes.io/container/{metric}" AND '
+                f'resource.type="k8s_container" AND '
+                f'resource.labels.project_id="{pool["project"]}" AND '
                 f'resource.labels.cluster_name="{pool["cluster"]}" AND '
                 f'resource.labels.location="{pool["location"]}"'
             )
@@ -567,9 +568,34 @@ class CloudCollector:
                 },
             )
             for s in series:
-                labels = s["resource"]["labels"]
+                monitored = s.get("resource", {})
+                labels = monitored.get("labels", {})
+                metric_identity = s.get("metric", {})
+                scope = {
+                    "project_id": pool["project"],
+                    "location": pool["location"],
+                    "cluster_name": pool["cluster"],
+                }
                 pod = pods.get((labels.get("namespace_name"), labels.get("pod_name")))
-                if not pod:
+                if (
+                    monitored.get("type") != "k8s_container"
+                    or any(labels.get(k) != value for k, value in scope.items())
+                    or metric_identity.get("type") != f"kubernetes.io/container/{metric}"
+                    or (
+                        resource == "memory"
+                        and metric_identity.get("labels", {}).get("memory_type") != "non-evictable"
+                    )
+                    or not pod
+                ):
+                    continue
+                containers = {
+                    c["name"]
+                    for field in ["containers", "initContainers", "ephemeralContainers"]
+                    for c in pod["spec"].get(field, [])
+                }
+                if labels.get("container_name") not in containers or any(
+                    label in labels and labels[label] != pod["uid"] for label in ["uid", "pod_uid"]
+                ):
                     continue
                 for p in s.get("points", []):
                     t = timestamp(p["interval"]["endTime"])

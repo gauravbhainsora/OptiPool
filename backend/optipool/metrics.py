@@ -128,7 +128,7 @@ def summarize(
                     resource == "memory"
                     and sample.get("memory_definition", memory_definition) != memory_definition
                 ):
-                    excluded_resources.add(resource)
+                    excluded_resources.add((sample["workload"], sample["replica"], resource))
                     warning = "Excluded samples with incompatible memory definition from saved window"
                     if warning not in warnings:
                         warnings.append(warning)
@@ -243,17 +243,26 @@ def summarize(
                 )
             )
         ]
+        details = snapshot["metrics"].get("attribution_gap_details", [])
+        global_gaps = snapshot["metrics"].get("attribution_global_gaps")
+        if global_gaps is None:
+            global_gaps = set(snapshot["metrics"].get("attribution_gaps", [])) - {
+                d.get("reason") for d in details
+            }
         for resource in ["cpu", "memory"]:
             evidence = target.get(resource + "_evidence") or resource_evidence(
                 [], {}, resource, snapshot["metrics"], start, cutoff, policy
             )
             member_evidence = [pod_metrics.get(p["uid"], {}).get(resource + "_evidence") for p in members]
             partial = (
-                resource in excluded_resources
-                or bool(snapshot["metrics"].get("attribution_gaps"))
+                any(w == workload["id"] and r == resource for w, _, r in excluded_resources)
+                or bool(global_gaps)
                 or any(
-                    detail.get("workload") == workload["id"] and detail.get("resource") == resource
-                    for detail in snapshot["metrics"].get("attribution_gap_details", [])
+                    detail.get("workload") == workload["id"]
+                    and detail.get("resource") == resource
+                    and detail.get("start", start) <= cutoff
+                    and detail.get("end", cutoff) >= start
+                    for detail in details
                 )
                 or len(current_members) < workload.get("pool_replicas", 0)
                 or any(e is None or e["valid_samples"] < minimum for e in member_evidence)

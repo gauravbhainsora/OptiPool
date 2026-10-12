@@ -35,6 +35,8 @@ Use `python3` on platforms where it resolves to Python 3.13+. Dependency version
 npm --prefix frontend run build
 .venv/bin/python scripts/verify-http.py http://127.0.0.1:8000
 (cd frontend && npx playwright install chromium && npm test)
+npm --prefix frontend run test:history
+npm --prefix frontend run test:upstream
 .venv/bin/python scripts/benchmark.py
 ```
 
@@ -79,4 +81,11 @@ Current source passes 81 backend cases and six browser flows. Extension cases co
 
 ### Historical replica browser journey
 
-`npm --prefix frontend run test:history` runs the synthetic deletion/rollout journey against its own temporary saved database and fixture server on localhost port 8114. It verifies a retained deleted CPU p99 winner, current versus historical replica counts, selected saved windows, CSV download and reload. The fixture also forces a terminal-success refresh response to check that the display reloads completed refreshes. The default `npm --prefix frontend test` explicitly excludes this fixture-specific test; run both commands for full browser verification. The fixture declares complete synthetic identity and membership intervals; it does not claim real monitoring supplies that evidence.
+`npm --prefix frontend run test:history` runs the synthetic deletion/rollout journey against its own temporary saved database and fixture server on localhost port 8114. It verifies a retained deleted CPU p99 winner, current versus historical replica counts, selected saved windows, CSV download and reload. The fixture also forces a terminal-success refresh response to check that the display reloads completed refreshes. The default `npm --prefix frontend test` excludes both fixture-specific journeys; CI runs all three browser commands. Run all three for full browser verification. The fixture declares complete synthetic identity and membership intervals; it does not claim real monitoring supplies that evidence.
+
+
+### Upstream historical metadata browser journey
+
+`npm --prefix frontend run test:upstream` uses a synthetic upstream interval source and its own temporary database on localhost port 8115. It verifies a deleted replica missed by inventory, its independent highest-replica p99, visible discovery status, pinned exports and immutable reads. Missing or ambiguous metadata remains partial; this is no assertion about actual GMP metadata availability. Both dedicated commands set their fixture flags and absolute backend/test import paths. Set `OPTIPOOL_TEST_PORT` to a free port (for example 8128, 8129 or 8130) when other local runs coexist. Playwright stops each fixture server after the run; it never opens the normal demo or production database.
+
+Review regressions exercise foreign native project/type/cluster/container identities, scoped CPU/memory/workload gaps, conflicting risk Pod UIDs, recovery of prior adverse risk after optional failure and concurrent publication through public adapter, signed API/export and persistence boundaries. A blocked external compression primitive deterministically verifies that saved reads and another pool's publication proceed during staging, while publications for the same pool serialize and inherit the preceding snapshot.

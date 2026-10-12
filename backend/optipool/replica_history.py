@@ -70,10 +70,21 @@ def merge_history(snapshot, previous, snapshot_id):
     current_workloads = {w["id"]: w for w in result["workloads"]}
     rejected = set()
     rejected_pairs = {}
+    uid_workloads = {uid: record.get("workload") for uid, record in current.items()}
+    gap_details = deepcopy(metrics.get("attribution_gap_details", []))
+    # Preserve truly unscoped failures separately from the human-readable summary.
+    explicit_globals = metrics.get("attribution_global_gaps")
+    global_gaps = set(
+        explicit_globals if explicit_globals is not None else metrics.get("attribution_gaps", [])
+    )
+    if explicit_globals is None:
+        global_gaps -= {detail.get("reason") for detail in gap_details}
 
-    def reject(uid, reason):
+    def reject(uid, reason, resource=None):
         rejected.add(reason)
-        rejected_pairs.setdefault(reason, set()).update((uid, resource) for resource in ["cpu", "memory"])
+        rejected_pairs.setdefault(reason, set()).update(
+            (uid, key) for key in ([resource] if resource else ["cpu", "memory"])
+        )
 
     historical_workloads = {}
     # Oldest first; newest saved collection wins duplicate values deterministically.
@@ -83,6 +94,16 @@ def merge_history(snapshot, previous, snapshot_id):
         observed_records = inventory_evidence(item)
         records = {uid: {**observed_records.get(uid, {}), **record} for uid, record in records.items()}
         source_workloads = {w["id"]: w for w in item.get("workloads", [])}
+        uid_workloads.update({uid: record.get("workload") for uid, record in records.items()})
+        for detail in source_metrics.get("attribution_gap_details", []):
+            if origin != snapshot_id and detail.get("replica") in records:
+                bounded = {
+                    "start": source_metrics["cutoff"] - 10 * 86400,
+                    "end": source_metrics["cutoff"],
+                    **deepcopy(detail),
+                }
+                if bounded["end"] >= start and bounded["start"] <= cutoff and bounded not in gap_details:
+                    gap_details.append(bounded)
         # Valid upstream identities remain expected replicas even with no compatible
         # usage. Keeping them prevents an available current replica from hiding a
         # discovered replica whose CPU or memory observations are unavailable.
@@ -124,6 +145,7 @@ def merge_history(snapshot, previous, snapshot_id):
             uid, timestamp = sample.get("replica"), sample.get("time")
             if not isinstance(timestamp, (int, float)) or not start <= timestamp <= cutoff:
                 continue
+            uid_workloads.setdefault(uid, sample.get("workload"))
             record = records.get(uid)
             if (
                 not record
@@ -166,7 +188,7 @@ def merge_history(snapshot, previous, snapshot_id):
                     and sample.get("memory_definition", source_metrics.get("memory_definition"))
                     != source_metrics.get("memory_definition")
                 ):
-                    reject(uid, "Incompatible sample source or definition")
+                    reject(uid, "Incompatible sample source or definition", resource)
                     continue
                 window = source_metrics.get("cpu_rate_window_seconds") if resource == "cpu" else 0
                 if (
@@ -175,7 +197,7 @@ def merge_history(snapshot, previous, snapshot_id):
                     or not math.isfinite(window)
                     or window < 0
                 ):
-                    reject(uid, "Unknown CPU rate window")
+                    reject(uid, "Unknown CPU rate window", resource)
                     continue
                 beginning = timestamp - window
                 intervals = [
@@ -188,17 +210,17 @@ def merge_history(snapshot, previous, snapshot_id):
                     and timestamp <= m.get("end", -math.inf)
                 ]
                 if beginning < record["created"] or not intervals:
-                    reject(uid, "Unknown pool membership or lifetime interval")
+                    reject(uid, "Unknown pool membership or lifetime interval", resource)
                     continue
                 shape = definition(source_metrics, resource)
                 wanted = definition(metrics, resource)
                 # If the new monitoring source is unavailable, retained evidence supplies
                 # one compatible definition, never a mix of incompatible histories.
                 if wanted["source"] != "Unavailable" and shape != wanted:
-                    reject(uid, "Incompatible retained metric definition")
+                    reject(uid, "Incompatible retained metric definition", resource)
                     continue
                 if resource in definitions and shape != definitions[resource]:
-                    reject(uid, "Incompatible retained metric definition")
+                    reject(uid, "Incompatible retained metric definition", resource)
                     continue
                 signature = {
                     k: source_metrics.get(k)
@@ -214,7 +236,7 @@ def merge_history(snapshot, previous, snapshot_id):
                 }
                 if metrics.get("source") == "Unavailable":
                     if retained_signature is not None and signature != retained_signature:
-                        reject(uid, "Incompatible retained metric definition")
+                        reject(uid, "Incompatible retained metric definition", resource)
                         continue
                     retained_signature, retained_metadata = signature, source_metrics
                 definitions[resource] = shape
@@ -258,10 +280,20 @@ def merge_history(snapshot, previous, snapshot_id):
         for resource in ["cpu", "memory"]
         if resource in point
     }
-    metrics["attribution_gaps"] = sorted(
-        set(metrics.get("attribution_gaps", []))
-        | {reason for reason, pairs in rejected_pairs.items() if pairs - accepted}
-    )
+    for reason, pairs in rejected_pairs.items():
+        for uid, resource in sorted(pairs - accepted, key=str):
+            workload = uid_workloads.get(uid)
+            if workload:
+                detail = dict(
+                    replica=uid, workload=workload, resource=resource, reason=reason, start=start, end=cutoff
+                )
+                if detail not in gap_details:
+                    gap_details.append(detail)
+            else:
+                global_gaps.add(reason)
+    metrics["attribution_gap_details"] = gap_details
+    metrics["attribution_global_gaps"] = sorted(global_gaps)
+    metrics["attribution_gaps"] = sorted(global_gaps | {detail["reason"] for detail in gap_details})
     metrics["history_exclusions"] = sorted(rejected)
     warnings.extend(
         "Historical evidence excluded: " + reason

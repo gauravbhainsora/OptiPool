@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Independent highest-replica p99 evidence in saved API, dashboard and exports, with configurable count/duration/coverage gates for CPU and memory reductions (20 samples, 24 hours and 90% by default).
+- Validated isolated GMP/native source candidates, exact native scope/identity checks and explicit source, units, cadence and averaging semantics.
+- Retained observed replicas plus opt-in existing upstream interval metadata for deleted replicas, immutable UID/controller/pool provenance and scoped resource/workload attribution gaps.
+- Configurable 60/300-second query cadence (default 300), five-minute GMP CPU rates and separate sampled memory peaks with the recommendation peak floor.
+- Optional reset-aware throttling/OOM/restart history with required risk evidence by default, configurable thresholds, foreign-UID rejection and retained adverse evidence/failure provenance after optional outages.
+- History decoding/merging/compression outside the shared SQLite connection lock, serialized same-pool staging and short atomic writes; saved reads and other pool publications remain available.
+- CI runs both dedicated retained-history and upstream browser/export journeys, alongside default dashboard tests. Existing snapshot shapes remain readable with unknown missing evidence; no cloud configuration or released/live acceptance is implied.
+
 - Joint capacity assessments for up to 20 services, with shared node budgets, aggregate namespace quotas/peak bounds, pinned snapshots and per-service placement explanations.
 - New-pool design tab comparing up to 10 saved node profiles, with preserved request buffers, saved on-demand/CUD costs, proposed configuration, JSON download and persisted history.
 - Additive estimate classification and source-reference tables preserve every snapshot used by retained designs.
