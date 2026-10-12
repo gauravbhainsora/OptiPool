@@ -349,3 +349,119 @@ def test_metric_query_batches_bound_names_and_encoded_length():
         len(batch) <= 100 and len(quote(json.dumps("|".join(re.escape(n) for n in batch)), safe="")) <= 3000
         for batch in batches
     )
+
+
+def test_invalid_gmp_parsing_and_empty_native_publish_unavailable(saved, settings):
+    collector = object.__new__(CloudCollector)
+    collector.settings = settings
+    pod = saved["context"]["pods"][0]
+    collector.get = lambda *args, **kwargs: {
+        "status": "success",
+        "data": {
+            "result": [
+                {
+                    "metric": {"namespace": pod["namespace"], "pod": pod["name"]},
+                    "values": [[saved["metrics"]["cutoff"], "0.2"], [saved["metrics"]["cutoff"], "broken"]],
+                }
+            ]
+        },
+    }
+    collector.pages = lambda *args, **kwargs: []
+    result = collector.metrics(saved["pool"], saved)
+    assert result["source"] == "Unavailable"
+    assert result["samples"] == []
+    assert result["resource_status"] == {"cpu": "unavailable", "memory": "unavailable"}
+    assert "GMP" in result["fallback_reason"]
+
+
+def test_partial_gmp_survives_failed_native_without_source_mixing(saved, settings):
+    collector = object.__new__(CloudCollector)
+    collector.settings = settings
+    pod = saved["context"]["pods"][0]
+    t = saved["metrics"]["cutoff"]
+    collector.get = lambda url, params: {
+        "status": "success",
+        "data": {
+            "result": []
+            if "working_set" in params["query"]
+            else [
+                {
+                    "metric": {"namespace": pod["namespace"], "pod": pod["name"]},
+                    "values": [[t, "0.2"]],
+                }
+            ]
+        },
+    }
+
+    def native(url, field, params):
+        if "memory/used_bytes" in params["filter"]:
+            raise ValueError("memory batch failed")
+        return [
+            {
+                "resource": {"labels": {"namespace_name": pod["namespace"], "pod_name": pod["name"]}},
+                "points": [{"interval": {"endTime": "2024-10-04T00:00:00Z"}, "value": {"doubleValue": 99}}],
+            }
+        ]
+
+    collector.pages = native
+    result = collector.metrics(saved["pool"], saved)
+    assert result["source"] == "GMP cAdvisor"
+    assert result["samples"][0]["cpu"] == 0.2
+    assert result["resource_status"] == {"cpu": "available", "memory": "unavailable"}
+    assert result["cpu_rate_window_seconds"] == 300
+    assert result["units"] == {"cpu": "cores", "memory": "bytes"}
+    assert any("Native metrics unavailable" in w for w in result["warnings"])
+
+
+@pytest.mark.parametrize("failure", ["batch", "response", "parse"])
+def test_failed_gmp_candidate_never_leaks_into_native(saved, settings, failure):
+    import time
+
+    collector = object.__new__(CloudCollector)
+    collector.settings = settings
+    pod = saved["context"]["pods"][0]
+    pod["created"] = time.time() - 1000
+    t = int(time.time())
+
+    def gmp(url, params):
+        if "working_set" in params["query"]:
+            if failure == "batch":
+                raise ValueError("batch failed")
+            if failure == "response":
+                return {"status": "success", "data": {"result": {}}}
+            values = [[t, "123"], [t, "broken"]]
+        else:
+            values = [[t, "999"]]
+        return {
+            "status": "success",
+            "data": {
+                "result": [{"metric": {"namespace": pod["namespace"], "pod": pod["name"]}, "values": values}]
+            },
+        }
+
+    collector.get = gmp
+
+    def native(url, field, params):
+        return [
+            {
+                "resource": {"labels": {"namespace_name": pod["namespace"], "pod_name": pod["name"]}},
+                "points": [
+                    {
+                        "interval": {
+                            "endTime": __import__("datetime")
+                            .datetime.fromtimestamp(t, __import__("datetime").UTC)
+                            .isoformat()
+                        },
+                        "value": {"doubleValue": 0.5 if "cpu/" in params["filter"] else 4096},
+                    }
+                ],
+            }
+        ]
+
+    collector.pages = native
+    result = collector.metrics(saved["pool"], saved)
+    assert result["source"] == "Native GKE Cloud Monitoring"
+    assert result["samples"][0]["cpu"] == 0.5
+    assert result["samples"][0]["memory"] == 4096
+    assert result["samples"][0]["memory_definition"] == "Non-evictable memory"
+    assert result["cpu_alignment_window_seconds"] == 300

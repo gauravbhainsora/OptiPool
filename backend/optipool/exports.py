@@ -74,6 +74,28 @@ def pool_rows(inventory, snapshots=None):
     return rows
 
 
+def metric_provenance(usage):
+    usage = usage or {}
+    definition = usage.get("query_definition") or {}
+    units = usage.get("units") or {}
+    return {
+        "Metric source": usage.get("source", "Unknown"),
+        "Memory definition": usage.get("memory_definition", "Unknown"),
+        "Query cadence seconds": usage.get("cadence_seconds"),
+        "CPU rate window seconds": usage.get("cpu_rate_window_seconds"),
+        "CPU alignment window seconds": usage.get("cpu_alignment_window_seconds"),
+        "CPU metric": definition.get("cpu_metric", "Unknown"),
+        "Memory metric": definition.get("memory_metric", "Unknown"),
+        "CPU aggregation": definition.get("cpu_aggregation", "Unknown"),
+        "Memory aggregation": definition.get("memory_aggregation", "Unknown"),
+        "CPU unit": units.get("cpu", "Unknown"),
+        "Memory unit": units.get("memory", "Unknown"),
+        "CPU observations": usage.get("resource_status", {}).get("cpu", "unknown"),
+        "Memory observations": usage.get("resource_status", {}).get("memory", "unknown"),
+        "Fallback reason": usage.get("fallback_reason"),
+    }
+
+
 def workload_rows(snapshot, usage):
     rows = []
     for w in snapshot["workloads"]:
@@ -101,8 +123,7 @@ def workload_rows(snapshot, usage):
                 "Memory p99 replica": metric.get("memory_replica"),
                 "Window days": usage["days"],
                 "Metrics cutoff UTC": iso(usage["cutoff"]),
-                "Metric source": usage["source"],
-                "Memory definition": usage["memory_definition"],
+                **metric_provenance(usage),
                 "Coverage": usage["coverage"],
                 "Snapshot UTC": iso(snapshot["saved_at"]),
                 "Snapshot ID": snapshot["id"],
@@ -140,6 +161,7 @@ def pod_rows(snapshot, search="", usage=None):
                 "CPU limit cores": p["limits"]["cpu"],
                 "Memory limit GiB": p["limits"]["memory"] / 1024**3,
                 "Window days": (usage or {}).get("days"),
+                **metric_provenance(usage),
                 "CPU latest cores": metric.get("cpu_latest"),
                 "Memory latest GiB": metric["memory_latest"] / 1024**3
                 if metric.get("memory_latest") is not None

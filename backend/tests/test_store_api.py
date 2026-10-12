@@ -179,3 +179,78 @@ def test_json_boundary_and_invalid_manifest(settings):
             ).status_code
             == 422
         )
+
+
+def test_saved_source_metadata_reaches_authenticated_api_and_exports_without_reads(settings, monkeypatch):
+    import json
+
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from google.oauth2 import id_token
+
+    settings.auth_mode = "iap"
+    settings.iap_audience = "/projects/123/global/backendServices/456"
+    key = ec.generate_private_key(ec.SECP256R1())
+    jwk = json.loads(jwt.algorithms.ECAlgorithm.to_jwk(key.public_key()))
+    jwk.update(kid="test", alg="ES256", use="sig")
+    monkeypatch.setattr(id_token, "_fetch_certs", lambda *args: {"keys": [jwk]})
+    signed = jwt.encode(
+        {
+            "iss": "https://cloud.google.com/iap",
+            "aud": settings.iap_audience,
+            "sub": "123",
+            "email": "user@example.org",
+            "iat": int(time.time()) - 5,
+            "exp": int(time.time()) + 300,
+        },
+        key,
+        algorithm="ES256",
+        headers={"kid": "test"},
+    )
+
+    class SourceCollector(CountingCollector):
+        def collect(self, pool):
+            snapshot = super().collect(pool)
+            snapshot["metrics"].update(
+                source="GMP cAdvisor",
+                memory_definition="Working set",
+                cadence_seconds=60,
+                cpu_rate_window_seconds=300,
+                cpu_alignment_window_seconds=None,
+                units={"cpu": "cores", "memory": "bytes"},
+                query_definition={
+                    "cpu_metric": "container_cpu_usage_seconds_total",
+                    "memory_metric": "container_memory_working_set_bytes",
+                    "cpu_aggregation": "sum containers after rate[5m]",
+                    "memory_aggregation": "sum container samples",
+                },
+                resource_status={"cpu": "available", "memory": "unavailable"},
+                fallback_reason="Native query failed; selected validated GMP partial observations",
+            )
+            for point in snapshot["metrics"]["samples"]:
+                point.pop("memory", None)
+            return snapshot
+
+    collector = SourceCollector(settings)
+    with TestClient(create_app(settings, collector), headers={"x-goog-iap-jwt-assertion": signed}) as client:
+        assert client.get("/api/inventory", headers={"x-goog-iap-jwt-assertion": ""}).status_code == 401
+        pool = initialized(client)["pools"][0]
+        before = collector.calls
+        for days in [1, 5, 10]:
+            usage = client.get("/api/snapshot", params={"pool_id": pool["id"], "days": days}).json()["usage"]
+            assert usage["cpu_rate_window_seconds"] == 300
+            assert usage["resource_status"] == {"cpu": "available", "memory": "unavailable"}
+            assert usage["query_definition"]["memory_metric"] == "container_memory_working_set_bytes"
+        for table in ["workloads", "pods"]:
+            for fmt in ["csv", "xlsx"]:
+                response = client.get(f"/api/export/{table}", params={"pool_id": pool["id"], "format": fmt})
+                if fmt == "csv":
+                    row = next(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig"))))
+                else:
+                    values = list(load_workbook(io.BytesIO(response.content)).active.values)
+                    row = dict(zip(values[0], values[1], strict=True))
+                assert row["Metric source"] == "GMP cAdvisor"
+                assert str(row["CPU rate window seconds"]) == "300"
+                assert row["Memory observations"] == "unavailable"
+                assert row["Fallback reason"] == usage["fallback_reason"]
+        assert collector.calls == before

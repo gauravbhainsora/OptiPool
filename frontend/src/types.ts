@@ -66,6 +66,13 @@ export type Usage = {
   source: string;
   memory_definition: string;
   coverage: string;
+  cadence_seconds: number | null;
+  cpu_rate_window_seconds: number | null;
+  cpu_alignment_window_seconds: number | null;
+  query_definition: Record<string, string> | null;
+  units: Record<string, string> | null;
+  resource_status: { cpu: string; memory: string };
+  fallback_reason: string | null;
   minimum_samples: number;
   warnings: string[];
   workloads: Record<string, Metric>;
@@ -262,7 +269,16 @@ export type Comparison = {
   }[];
 };
 
-export type ScopeSource = {
+export type ScopeSource = Pick<
+  Usage,
+  | "cadence_seconds"
+  | "cpu_rate_window_seconds"
+  | "cpu_alignment_window_seconds"
+  | "query_definition"
+  | "units"
+  | "resource_status"
+  | "fallback_reason"
+> & {
   pool_id: string;
   pool_name: string;
   snapshot_id: string;

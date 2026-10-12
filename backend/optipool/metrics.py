@@ -16,6 +16,8 @@ def resource_evidence(times, pod, resource, metadata, start, cutoff, policy, poo
     cadence = metadata.get("cadence_seconds")
     cadence = cadence if isinstance(cadence, (int, float)) and cadence > 0 else None
     rate_window = metadata.get("cpu_rate_window_seconds")
+    if rate_window is None:
+        rate_window = metadata.get("cpu_alignment_window_seconds")
     definition_basis = "Saved metadata" if rate_window is not None else "Unknown"
     if rate_window is None:
         # Definitions of older saved collectors are known; arbitrary sources are not.
@@ -104,12 +106,24 @@ def summarize(snapshot, days, minimum=20, minimum_observation_seconds=86400, min
     observed = {p["uid"]: p for p in snapshot.get("context", {}).get("pods", [])}
     evidence_pods = {**observed, **snapshot["metrics"].get("replica_evidence", {})}
     replicas = defaultdict(dict)
+    warnings = list(snapshot["metrics"].get("warnings", []))
+    memory_definition = snapshot["metrics"].get("memory_definition", "Unknown")
+    excluded_resources = set()
     for sample in snapshot["metrics"].get("samples", []):
         if start <= sample["time"] <= cutoff and sample.get("attributed"):
-            point = replicas[(sample["workload"], sample["replica"])].setdefault(sample["time"], {})
             for resource in ["cpu", "memory"]:
+                if (
+                    resource == "memory"
+                    and sample.get("memory_definition", memory_definition) != memory_definition
+                ):
+                    excluded_resources.add(resource)
+                    warning = "Excluded samples with incompatible memory definition from saved window"
+                    if warning not in warnings:
+                        warnings.append(warning)
+                    continue
                 value = sample.get(resource)
                 if value is not None and math.isfinite(value) and value >= 0:
+                    point = replicas[(sample["workload"], sample["replica"])].setdefault(sample["time"], {})
                     point[resource] = value
     workloads, pod_metrics = {}, {}
     timeline = defaultdict(lambda: {"cpu": None, "memory": None})
@@ -205,7 +219,8 @@ def summarize(snapshot, days, minimum=20, minimum_observation_seconds=86400, min
             )
             member_evidence = [pod_metrics.get(p["uid"], {}).get(resource + "_evidence") for p in members]
             partial = (
-                bool(snapshot["metrics"].get("attribution_gaps"))
+                resource in excluded_resources
+                or bool(snapshot["metrics"].get("attribution_gaps"))
                 or len(current_members) < workload.get("pool_replicas", 0)
                 or any(e is None or e["valid_samples"] < minimum for e in member_evidence)
             )
@@ -227,10 +242,18 @@ def summarize(snapshot, days, minimum=20, minimum_observation_seconds=86400, min
         "pods": pod_metrics,
         "timeline": [{"time": t, **v} for t, v in sorted(timeline.items())],
         "source": snapshot["metrics"].get("source", "Unavailable"),
-        "memory_definition": snapshot["metrics"].get("memory_definition", "Unavailable"),
+        "memory_definition": snapshot["metrics"].get("memory_definition", "Unknown"),
+        "query_definition": snapshot["metrics"].get("query_definition"),
+        "units": snapshot["metrics"].get("units"),
+        "cpu_rate_window_seconds": snapshot["metrics"].get("cpu_rate_window_seconds"),
+        "cpu_alignment_window_seconds": snapshot["metrics"].get("cpu_alignment_window_seconds"),
+        "resource_status": snapshot["metrics"].get(
+            "resource_status", {"cpu": "unknown", "memory": "unknown"}
+        ),
+        "fallback_reason": snapshot["metrics"].get("fallback_reason"),
         "coverage": snapshot["metrics"].get("coverage", "unavailable"),
         "cadence_seconds": cadence,
         "minimum_samples": minimum,
         "reduction_policy": policy,
-        "warnings": snapshot["metrics"].get("warnings", []),
+        "warnings": warnings,
     }
