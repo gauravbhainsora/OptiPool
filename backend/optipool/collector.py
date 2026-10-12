@@ -3,6 +3,7 @@
 import base64
 import datetime as dt
 import json
+import math
 import os
 import re
 import tempfile
@@ -239,17 +240,17 @@ class CloudCollector:
         return snapshot
 
     def metrics(self, pool, snapshot):
-        now, samples = int(time.time()), []
+        now = int(time.time())
         result = {
             "cutoff": now,
-            "samples": samples,
+            "samples": [],
             "source": "Unavailable",
             "coverage": "unavailable",
             "memory_definition": "Unavailable",
             "warnings": [],
+            "fallback_reason": None,
+            "resource_status": {"cpu": "unavailable", "memory": "unavailable"},
         }
-        match = f'project_id="{pool["project"]}",location="{pool["location"]}",cluster="{pool["cluster"]}",container!="",container!="POD"'
-        endpoint = f"https://monitoring.googleapis.com/v1/projects/{pool['project']}/location/global/prometheus/api/v1/query_range"
         selected_names = {n["name"] for n in snapshot["nodes"]}
         pods = {
             (p["namespace"], p["name"]): p
@@ -259,14 +260,16 @@ class CloudCollector:
         if not pods:
             result["warnings"].append("No attributable Pods on the selected pool")
             return result
+        candidates = []
         try:
-            queries = []
-            names = defaultdict(list)
+            candidate = {"cutoff": now, "samples": []}
+            match = f'project_id="{pool["project"]}",location="{pool["location"]}",cluster="{pool["cluster"]}",container!="",container!="POD"'
+            endpoint = f"https://monitoring.googleapis.com/v1/projects/{pool['project']}/location/global/prometheus/api/v1/query_range"
+            queries, names = [], defaultdict(list)
             for namespace, name in pods:
                 names[namespace].append(name)
             for namespace, members in names.items():
                 for batch in metric_batches(members):
-                    # Kubernetes names are DNS labels; escape regex and quote for PromQL separately.
                     pattern = "|".join(re.escape(name) for name in batch)
                     scoped = match + ",namespace=" + json.dumps(namespace) + ",pod=~" + json.dumps(pattern)
                     queries.extend(
@@ -290,47 +293,111 @@ class CloudCollector:
                     ),
                 ),
             )
-            series = {k: {"status": "success", "data": {"result": []}} for k in ["cpu", "memory"]}
-            for key, response in responses:
-                if response.get("status") != "success":
-                    raise ValueError("GMP query failed")
-                series[key]["data"]["result"].extend(response.get("data", {}).get("result", []))
-            if all(s.get("status") == "success" and s.get("data", {}).get("result") for s in series.values()):
-                result.update(source="GMP cAdvisor", memory_definition="Working set", cadence_seconds=300)
-                values = {}
-                for resource, response in series.items():
-                    for s in response["data"]["result"]:
-                        pod = pods.get((s["metric"].get("namespace"), s["metric"].get("pod")))
-                        if not pod:
+            values = {}
+            for resource, response in responses:
+                if (
+                    response.get("status") != "success"
+                    or not isinstance(response.get("data", {}).get("result"), list)
+                    or response.get("data", {}).get("resultType", "matrix") != "matrix"
+                ):
+                    raise ValueError("Invalid GMP query response")
+                for series in response["data"]["result"]:
+                    pod = pods.get((series["metric"].get("namespace"), series["metric"].get("pod")))
+                    if not pod:
+                        continue
+                    for t, v in series["values"]:
+                        t, value = float(t), float(v)
+                        if not math.isfinite(t):
+                            raise ValueError("Invalid GMP timestamp")
+                        if not math.isfinite(value) or value < 0:
                             continue
-                        for t, v in s.get("values", []):
-                            if t < pod["created"] + (300 if resource == "cpu" else 0):
-                                continue
-                            item = values.setdefault(
-                                (pod["uid"], t),
-                                {
-                                    "time": t,
-                                    "replica": pod["uid"],
-                                    "workload": pod["workload"],
-                                    "attributed": True,
-                                },
-                            )
-                            item[resource] = float(v) if v not in {"NaN", "+Inf", "-Inf"} else None
-                samples.extend(values.values())
+                        if (
+                            t < max(now - 10 * 86400, pod["created"] + (300 if resource == "cpu" else 0))
+                            or t > now
+                        ):
+                            continue
+                        item = values.setdefault(
+                            (pod["uid"], t),
+                            {
+                                "time": t,
+                                "replica": pod["uid"],
+                                "workload": pod["workload"],
+                                "attributed": True,
+                            },
+                        )
+                        item[resource] = value
+            candidate["samples"] = list(values.values())
+            self.describe_metrics(candidate, "GMP cAdvisor", "Working set")
+            if candidate["samples"]:
+                candidates.append(candidate)
+            if all(v == "available" for v in candidate["resource_status"].values()):
+                result.update(candidate)
             else:
-                self.native_metrics(pool, snapshot, result)
+                result["fallback_reason"] = "GMP has no validated observations for one or more resources"
         except Exception as exc:
-            result["warnings"].append("GMP unavailable: " + str(exc)[:200])
+            result["fallback_reason"] = "GMP unavailable: " + str(exc)[:200]
+        if result["source"] == "Unavailable":
             try:
-                self.native_metrics(pool, snapshot, result)
-            except Exception as fallback:
-                result["warnings"].append("Native metrics unavailable: " + str(fallback)[:200])
-        if samples:
+                candidate = {"cutoff": now, "samples": []}
+                self.native_metrics(pool, snapshot, candidate)
+                self.describe_metrics(candidate, "Native GKE Cloud Monitoring", "Non-evictable memory")
+                if candidate["samples"]:
+                    candidates.append(candidate)
+                if candidates:
+                    # Prefer more complete observations; GMP wins a partial tie.
+                    result.update(
+                        max(
+                            candidates,
+                            key=lambda c: sum(v == "available" for v in c["resource_status"].values()),
+                        )
+                    )
+            except Exception as exc:
+                result["warnings"].append("Native metrics unavailable: " + str(exc)[:200])
+                if candidates:
+                    result.update(candidates[0])
+        if result["fallback_reason"]:
+            result["warnings"].append(result["fallback_reason"])
+        if result["samples"]:
             result["coverage"] = "partial — surviving Pods within their observed current lifetime only"
             result["warnings"].append(
                 "Deleted replicas and earlier ownership/pool history are not reconstructed; highest p99 may be understated"
             )
+            for resource, status in result["resource_status"].items():
+                if status == "unavailable":
+                    result["warnings"].append(
+                        f"{resource.capitalize()} observations unavailable from selected source"
+                    )
         return result
+
+    @staticmethod
+    def describe_metrics(candidate, source, memory_definition):
+        native = source == "Native GKE Cloud Monitoring"
+        candidate.update(
+            source=source,
+            memory_definition=memory_definition,
+            cadence_seconds=300,
+            cpu_rate_window_seconds=300,
+            cpu_alignment_window_seconds=300 if native else None,
+            units={"cpu": "cores", "memory": "bytes"},
+            query_definition={
+                "cpu_metric": "kubernetes.io/container/cpu/core_usage_time"
+                if native
+                else "container_cpu_usage_seconds_total",
+                "memory_metric": "kubernetes.io/container/memory/used_bytes (non-evictable)"
+                if native
+                else "container_memory_working_set_bytes",
+                "cpu_aggregation": "ALIGN_RATE then sum containers"
+                if native
+                else "sum containers after rate[5m]",
+                "memory_aggregation": "ALIGN_MEAN then sum containers" if native else "sum container samples",
+            },
+            resource_status={
+                r: "available" if any(r in s for s in candidate["samples"]) else "unavailable"
+                for r in ["cpu", "memory"]
+            },
+        )
+        for sample in candidate["samples"]:
+            sample.update(source=source, memory_definition=memory_definition)
 
     def native_metrics(self, pool, snapshot, result):
         now = result["cutoff"]
@@ -375,15 +442,25 @@ class CloudCollector:
                     continue
                 for p in s.get("points", []):
                     t = timestamp(p["interval"]["endTime"])
-                    if t < pod["created"] + (300 if resource == "cpu" else 0):
+                    if (
+                        t < max(now - 10 * 86400, pod["created"] + (300 if resource == "cpu" else 0))
+                        or t > now
+                    ):
+                        continue
+                    value = p["value"].get("doubleValue", p["value"].get("int64Value"))
+                    if value is None:
+                        raise ValueError("Native metric point missing numeric value")
+                    value = float(value)
+                    if not math.isfinite(value) or value < 0:
                         continue
                     item = values.setdefault(
                         (pod["uid"], t),
                         {"time": t, "replica": pod["uid"], "workload": pod["workload"], "attributed": True},
                     )
-                    value = p["value"].get("doubleValue", p["value"].get("int64Value"))
-                    if value is not None:
-                        item[resource] = item.get(resource, 0) + float(value)
+                    total = item.get(resource, 0) + value
+                    if not math.isfinite(total):
+                        raise ValueError("Native metric sum is non-finite")
+                    item[resource] = total
         if values:
             result["samples"].extend(values.values())
             result.update(

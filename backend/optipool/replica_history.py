@@ -60,6 +60,12 @@ def merge_history(snapshot, previous, snapshot_id):
     current.update(deepcopy(metrics.get("replica_evidence", {})))
     current_workloads = {w["id"]: w for w in result["workloads"]}
     rejected = set()
+    rejected_pairs = {}
+
+    def reject(uid, reason):
+        rejected.add(reason)
+        rejected_pairs.setdefault(reason, set()).update((uid, resource) for resource in ["cpu", "memory"])
+
     historical_workloads = {}
     # Oldest first; newest saved collection wins duplicate values deterministically.
     for item, origin in [*previous, (result, snapshot_id)]:
@@ -77,7 +83,7 @@ def merge_history(snapshot, previous, snapshot_id):
                 or not record.get("created")
                 or not record.get("controller_uid")
             ):
-                rejected.add("Legacy or missing replica/controller identity")
+                reject(uid, "Legacy or missing replica/controller identity")
                 continue
             workload = record.get("workload")
             if (
@@ -85,18 +91,18 @@ def merge_history(snapshot, previous, snapshot_id):
                 or workload != sample.get("workload")
                 or not workload.startswith(record.get("namespace", "") + "/")
             ):
-                rejected.add("Uncertain workload ownership")
+                reject(uid, "Uncertain workload ownership")
                 continue
             active = current_workloads.get(workload)
             if active and active.get("controller_uid") != record["controller_uid"]:
-                rejected.add("Changed or uncertain controller identity")
+                reject(uid, "Changed or uncertain controller identity")
                 continue
             # A UID cannot silently acquire a different controller or creation time.
             known = evidence.get(uid)
             if known and any(
                 known.get(k) != record.get(k) for k in ["workload", "controller_uid", "created"]
             ):
-                rejected.add("Conflicting replica identity")
+                reject(uid, "Conflicting replica identity")
                 continue
             for resource in ["cpu", "memory"]:
                 value = sample.get(resource)
@@ -114,7 +120,7 @@ def merge_history(snapshot, previous, snapshot_id):
                     or not math.isfinite(window)
                     or window < 0
                 ):
-                    rejected.add("Unknown CPU rate window")
+                    reject(uid, "Unknown CPU rate window")
                     continue
                 beginning = timestamp - window
                 intervals = [
@@ -127,17 +133,17 @@ def merge_history(snapshot, previous, snapshot_id):
                     and timestamp <= m.get("end", -math.inf)
                 ]
                 if beginning < record["created"] or not intervals:
-                    rejected.add("Unknown pool membership or lifetime interval")
+                    reject(uid, "Unknown pool membership or lifetime interval")
                     continue
                 shape = definition(source_metrics, resource)
                 wanted = definition(metrics, resource)
                 # If the new monitoring source is unavailable, retained evidence supplies
                 # one compatible definition, never a mix of incompatible histories.
                 if wanted["source"] != "Unavailable" and shape != wanted:
-                    rejected.add("Incompatible retained metric definition")
+                    reject(uid, "Incompatible retained metric definition")
                     continue
                 if resource in definitions and shape != definitions[resource]:
-                    rejected.add("Incompatible retained metric definition")
+                    reject(uid, "Incompatible retained metric definition")
                     continue
                 signature = {
                     k: source_metrics.get(k)
@@ -152,7 +158,7 @@ def merge_history(snapshot, previous, snapshot_id):
                 }
                 if metrics.get("source") == "Unavailable":
                     if retained_signature is not None and signature != retained_signature:
-                        rejected.add("Incompatible retained metric definition")
+                        reject(uid, "Incompatible retained metric definition")
                         continue
                     retained_signature, retained_metadata = signature, source_metrics
                 definitions[resource] = shape
@@ -190,7 +196,16 @@ def merge_history(snapshot, previous, snapshot_id):
     metrics["replica_evidence"] = evidence
     metrics["history_version"] = 1
     metrics["history_policy"] = "Newest compatible observation wins duplicate values; all origins retained"
-    metrics["attribution_gaps"] = sorted(rejected)
+    accepted = {
+        (point["replica"], resource)
+        for point in points.values()
+        for resource in ["cpu", "memory"]
+        if resource in point
+    }
+    metrics["attribution_gaps"] = sorted(
+        reason for reason, pairs in rejected_pairs.items() if pairs - accepted
+    )
+    metrics["history_exclusions"] = sorted(rejected)
     warnings.extend(
         "Historical evidence excluded: " + reason
         for reason in sorted(rejected)

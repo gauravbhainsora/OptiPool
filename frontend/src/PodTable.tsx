@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Search } from "lucide-react";
 import { cores, date, ExportButtons, gib } from "./components";
 import ClusterExportButtons from "./ClusterExportButtons";
+import MetricEvidence from "./MetricEvidence";
 import type { ClusterSnapshot, Snapshot } from "./types";
 
 export default function PodTable({
@@ -157,6 +158,14 @@ export default function PodTable({
                         . CPU throttling history is not collected.
                       </p>
                       <div className="table-wrap">
+                        <MetricEvidence
+                          resource="CPU"
+                          evidence={m?.cpu_evidence}
+                        />
+                        <MetricEvidence
+                          resource="Memory"
+                          evidence={m?.memory_evidence}
+                        />
                         <table>
                           <thead>
                             <tr>
