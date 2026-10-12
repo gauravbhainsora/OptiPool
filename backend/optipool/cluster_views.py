@@ -49,12 +49,17 @@ def combine(project, location, cluster, views, missing):
                     "namespace": workload["namespace"],
                     "kind": workload["kind"],
                     "pool_replicas": 0,
+                    "historical_replicas_observed": 0,
+                    "historical_replica_uids": set(),
                     "requested": {"cpu": 0, "memory": 0},
                     "limits": {"cpu": 0, "memory": 0},
                     "services": set(),
                     "pools": [],
                     "cpu_p99": None,
                     "memory_p99": None,
+                    "memory_peak": None,
+                    "memory_peak_replica": None,
+                    "memory_peak_pool": None,
                     "cpu_complete": True,
                     "memory_complete": True,
                     "memory_definitions": set(),
@@ -67,6 +72,7 @@ def combine(project, location, cluster, views, missing):
                 },
             )
             target["pool_replicas"] += workload["pool_replicas"]
+            target["historical_replica_uids"].update(metric.get("historical_replica_uids", []))
             target["services"].update(workload["services"])
             for resource in ["cpu", "memory"]:
                 target["requested"][resource] += workload["requested"][resource]
@@ -86,7 +92,12 @@ def combine(project, location, cluster, views, missing):
                         "snapshot_id": value["id"],
                         "cutoff": usage["cutoff"],
                     }
-            if metric.get("memory_p99") is not None:
+            peak = metric.get("memory_peak")
+            if peak is not None and (target["memory_peak"] is None or peak > target["memory_peak"]):
+                target["memory_peak"] = peak
+                target["memory_peak_replica"] = metric.get("memory_peak_replica")
+                target["memory_peak_pool"] = pool["name"]
+            if metric.get("memory_p99") is not None or peak is not None:
                 target["memory_definitions"].add(usage["memory_definition"])
             target["pools"].append(
                 {
@@ -100,8 +111,13 @@ def combine(project, location, cluster, views, missing):
             )
     for target in workloads.values():
         target["services"] = sorted(target["services"])
+        target["historical_replica_uids"] = sorted(target["historical_replica_uids"])
+        target["historical_replicas_observed"] = len(target["historical_replica_uids"])
         target["memory_definitions"] = sorted(target["memory_definitions"])
         if len(target["memory_definitions"]) > 1:
+            target["memory_peak"] = None
+            target["memory_peak_replica"] = None
+            target["memory_peak_pool"] = None
             target["memory_p99"] = None
             target["memory_replica"] = None
             target["memory_pool"] = None
@@ -131,12 +147,17 @@ def workload_rows(scope):
             "Workload": w["name"],
             "Node pools": ", ".join(p["pool_name"] for p in w["pools"]),
             "Replicas across selected pools": w["pool_replicas"],
+            "Historical replicas observed across pool observations": w["historical_replicas_observed"],
+            "Historical replica UIDs": ", ".join(w["historical_replica_uids"]),
             "CPU requests across pools": w["requested"]["cpu"],
             "Memory requests across pools GiB": w["requested"]["memory"] / 1024**3,
             "Highest replica p99 CPU cores": w["cpu_p99"],
             "Highest replica p99 memory GiB": w["memory_p99"] / 1024**3
             if w["memory_p99"] is not None
             else None,
+            "Sampled memory peak GiB": w["memory_peak"] / 1024**3 if w["memory_peak"] is not None else None,
+            "Sampled memory peak replica": w["memory_peak_replica"],
+            "Sampled memory peak pool": w["memory_peak_pool"],
             "CPU coverage complete": w["cpu_complete"],
             "Memory coverage complete": w["memory_complete"],
             "Window days per pool": scope["days"],

@@ -37,7 +37,11 @@ def resource_evidence(times, pod, resource, metadata, start, cutoff, policy, poo
     if "memberships" in pod:
         bounded = []
         for membership in pod["memberships"]:
-            if membership.get("pool_id") != pool_id or not known:
+            if (
+                membership.get("pool_id") != pool_id
+                or created is None
+                or (resource == "cpu" and rate_window is None)
+            ):
                 continue
             begin = max(start, max(created, membership["start"]) + (rate_window if resource == "cpu" else 0))
             end = min(cutoff, membership["end"])
@@ -107,8 +111,12 @@ def summarize(
         "minimum_observation_seconds": minimum_observation_seconds,
         "minimum_coverage": minimum_coverage,
     }
-    observed = {p["uid"]: p for p in snapshot.get("context", {}).get("pods", [])}
-    evidence_pods = {**observed, **snapshot["metrics"].get("replica_evidence", {})}
+    selected_nodes = {n["name"] for n in snapshot.get("nodes", [])}
+    observed = {
+        p["uid"]: p for p in snapshot.get("context", {}).get("pods", []) if p.get("node") in selected_nodes
+    }
+    history = snapshot["metrics"].get("replica_evidence", {})
+    evidence_pods = {**observed, **history}
     replicas = defaultdict(dict)
     warnings = list(snapshot["metrics"].get("warnings", []))
     memory_definition = snapshot["metrics"].get("memory_definition", "Unknown")
@@ -139,14 +147,25 @@ def summarize(
                 "memory_p99": None,
                 "cpu_replica": None,
                 "memory_replica": None,
+                "memory_peak": None,
+                "memory_peak_replica": None,
                 "replicas_observed": 0,
+                "historical_replicas_observed": 0,
+                "historical_replica_uids": [],
                 "samples": 0,
             },
         )
         target["replicas_observed"] += 1
+        historical = replica not in observed
+        if historical:
+            target["historical_replicas_observed"] += 1
+            target["historical_replica_uids"].append(replica)
         target["samples"] += len(points)
+
         metric = {
             "workload": workload,
+            "historical": historical,
+            "identity": history.get(replica),
             "samples": len(points),
             "last_sample_at": max(points),
         }
@@ -173,6 +192,13 @@ def summarize(
             metric[resource + "_coverage"] = min(1, len(values) / expected) if expected else None
             metric[resource + "_p99"] = percentile(values) if len(values) >= minimum else None
             metric[resource + "_peak"] = max(values) if values else None
+            if (
+                resource == "memory"
+                and metric["memory_peak"] is not None
+                and (target["memory_peak"] is None or metric["memory_peak"] > target["memory_peak"])
+            ):
+                target["memory_peak"] = metric["memory_peak"]
+                target["memory_peak_replica"] = replica
             latest = max(
                 (
                     t
@@ -262,6 +288,8 @@ def summarize(
             "minimum_samples": minimum,
             "reduction_policy": policy,
             "warnings": warnings,
+            "attribution_gaps": snapshot["metrics"].get("attribution_gaps", []),
+            "historical_replicas": [{"uid": uid, **m} for uid, m in pod_metrics.items() if m["historical"]],
         },
         risk_policy,
     )

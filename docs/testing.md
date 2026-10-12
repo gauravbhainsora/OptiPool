@@ -76,3 +76,7 @@ The post-v0.2 changes pass 74 backend cases and four browser flows. Cluster case
 ## Planner extensions
 
 Current source passes 81 backend cases and six browser flows. Extension cases cover joint consumption, aggregate quotas/peak bounds, duplicate names, affinity between proposed services, empty-pool designs, profile/price ranking, source immutability, foreign pins, no collection and preservation of every supporting snapshot through retention and backup/restore. Browser flows cover service rows/placements, stale-response cancellation on pool change, new-pool candidates, JSON, reloaded history and mobile overflow. Docker HTTP smoke includes bundles and new-pool design/history. The benchmark adds 20-user bundle and two-profile design workloads.
+
+### Historical replica browser journey
+
+`npm --prefix frontend run test:history` runs the synthetic deletion/rollout journey against its own temporary saved database and fixture server on localhost port 8114. It verifies a retained deleted CPU p99 winner, current versus historical replica counts, selected saved windows, CSV download and reload. The fixture also forces a terminal-success refresh response to check that the display reloads completed refreshes. The default `npm --prefix frontend test` explicitly excludes this fixture-specific test; run both commands for full browser verification. The fixture declares complete synthetic identity and membership intervals; it does not claim real monitoring supplies that evidence.

@@ -46,6 +46,9 @@ export type Workload = {
 export type Metric = {
   cpu_risk?: Risk;
   memory_risk?: Risk;
+
+  memory_peak: number | null;
+  memory_peak_replica: string | null;
   cpu_evidence?: ResourceEvidence;
   memory_evidence?: ResourceEvidence;
   cpu_p99: number | null;
@@ -54,6 +57,8 @@ export type Metric = {
   memory_replica: string | null;
   samples: number;
   replicas_observed: number;
+  historical_replicas_observed?: number;
+  historical_replica_uids?: string[];
 };
 export type Usage = {
   reduction_policy: {
@@ -327,6 +332,11 @@ export type ClusterSnapshot = {
     memory_evidence?: ResourceEvidence;
     cpu_p99: number | null;
     memory_p99: number | null;
+    historical_replicas_observed?: number;
+    historical_replica_uids?: string[];
+    memory_peak: number | null;
+    memory_peak_replica: string | null;
+    memory_peak_pool: string | null;
     cpu_complete: boolean;
     memory_complete: boolean;
     memory_definitions: string[];

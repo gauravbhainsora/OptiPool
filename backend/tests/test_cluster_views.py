@@ -21,8 +21,14 @@ def test_combine_groups_controllers_and_keeps_independent_p99_and_sources(saved)
     b["id"] = "second"
     b["saved_at"] += 3600
     key = a["workloads"][0]["id"]
-    a["usage"]["workloads"][key].update(cpu_p99=2, memory_p99=10, cpu_replica="cpu-winner")
-    b["usage"]["workloads"][key].update(cpu_p99=1, memory_p99=20, memory_replica="memory-winner")
+    a["usage"]["workloads"][key].update(cpu_p99=2, memory_p99=10, cpu_replica="cpu-winner", memory_peak=100)
+    b["usage"]["workloads"][key].update(
+        cpu_p99=1,
+        memory_p99=20,
+        memory_replica="memory-winner",
+        memory_peak=200,
+        memory_peak_replica="peak-winner",
+    )
     result = combine("project", "region", "cluster", [a, b], [])
     workload = result["workloads"][0]
     assert len(result["workloads"]) == len(a["workloads"])
@@ -30,10 +36,12 @@ def test_combine_groups_controllers_and_keeps_independent_p99_and_sources(saved)
     assert workload["requested"]["cpu"] == a["workloads"][0]["requested"]["cpu"] * 2
     assert workload["cpu_p99"] == 2 and workload["memory_p99"] == 20
     assert workload["cpu_replica"] == "cpu-winner" and workload["memory_replica"] == "memory-winner"
+    assert workload["memory_peak"] == 200 and workload["memory_peak_replica"] == "peak-winner"
     assert result["sources"][0]["saved_at"] != result["sources"][1]["saved_at"]
     assert "desired" not in workload  # Cluster totals must not be added across pool snapshots.
     b["usage"]["memory_definition"] = "Different definition"
     mixed = combine("project", "region", "cluster", [a, b], [])["workloads"][0]
+    assert mixed["memory_peak"] is None
     assert mixed["memory_p99"] is None and not mixed["memory_complete"]
     b["usage"]["workloads"].clear()
     partial = combine("project", "region", "cluster", [a, b], [])["workloads"][0]

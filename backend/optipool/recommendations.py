@@ -48,7 +48,8 @@ def recommend(snapshot, usage, headroom=20):
             value = p99
             if key == "memory" and p99 is not None:
                 value = max(
-                    [p99] + [usage["pods"].get(p["uid"], {}).get("memory_peak") or 0 for p in members]
+                    [p99, metrics.get("memory_peak") or 0]
+                    + [usage["pods"].get(p["uid"], {}).get("memory_peak") or 0 for p in members]
                 )
             proposed[key] = (
                 max(step, math.ceil(value * (1 + headroom / 100) / step) * step)

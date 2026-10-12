@@ -10,6 +10,8 @@ from pathlib import Path
 
 from filelock import FileLock, Timeout
 
+from .replica_history import merge_history
+
 
 def pack(value):
     return zlib.compress(json.dumps(value, separators=(",", ":"), allow_nan=False).encode())
@@ -183,9 +185,13 @@ class Store:
         if payload.get("core_complete") is not True or payload.get("pool", {}).get("id") != pool_id:
             raise ValueError("Incomplete or mismatched core snapshot cannot be published")
         ident = str(uuid.uuid4())
-        packed, header = pack(payload), pack(overview(payload))
-        core = pack({k: v for k, v in payload.items() if k != "metrics"})
         with self.lock, self.db:
+            rows = self.db.execute(
+                "SELECT id,payload FROM snapshots WHERE pool_id=? ORDER BY created ASC,id ASC", (pool_id,)
+            ).fetchall()
+            payload = merge_history(payload, [(unpack(r["payload"]), r["id"]) for r in rows], ident)
+            packed, header = pack(payload), pack(overview(payload))
+            core = pack({k: v for k, v in payload.items() if k != "metrics"})
             self.db.execute("INSERT INTO snapshots VALUES (?,?,?,?)", (ident, pool_id, time.time(), packed))
             self.db.execute("INSERT INTO snapshot_overviews VALUES (?,?)", (ident, header))
             self.db.execute("INSERT INTO snapshot_core VALUES (?,?)", (ident, core))

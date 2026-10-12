@@ -138,6 +138,13 @@ def workload_rows(snapshot, usage):
                 "Highest replica p99 memory GiB": metric["memory_p99"] / 1024**3
                 if metric.get("memory_p99") is not None
                 else None,
+                "Historical replicas observed": metric.get("historical_replicas_observed", 0),
+                "Historical replica UIDs": ", ".join(metric.get("historical_replica_uids", [])),
+                "Historical attribution gaps": "; ".join(usage.get("attribution_gaps", [])),
+                "Sampled memory peak GiB": metric["memory_peak"] / 1024**3
+                if metric.get("memory_peak") is not None
+                else None,
+                "Sampled memory peak replica": metric.get("memory_peak_replica"),
                 "CPU p99 replica": metric.get("cpu_replica"),
                 "Memory p99 replica": metric.get("memory_replica"),
                 "Window days": usage["days"],
@@ -188,6 +195,9 @@ def pod_rows(snapshot, search="", usage=None):
                 "CPU p99 cores": metric.get("cpu_p99"),
                 "Memory p99 GiB": metric["memory_p99"] / 1024**3
                 if metric.get("memory_p99") is not None
+                else None,
+                "Sampled memory peak GiB": metric["memory_peak"] / 1024**3
+                if metric.get("memory_peak") is not None
                 else None,
                 "CPU sample UTC": iso(metric.get("cpu_sample_at")),
                 "Memory sample UTC": iso(metric.get("memory_sample_at")),

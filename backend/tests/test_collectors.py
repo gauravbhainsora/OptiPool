@@ -465,3 +465,90 @@ def test_failed_gmp_candidate_never_leaks_into_native(saved, settings, failure):
     assert result["samples"][0]["memory"] == 4096
     assert result["samples"][0]["memory_definition"] == "Non-evictable memory"
     assert result["cpu_alignment_window_seconds"] == 300
+
+
+def test_finer_gmp_cadence_keeps_five_minute_cpu_rate(saved, settings):
+    import time
+
+    settings.metric_cadence_seconds = 60
+    collector = object.__new__(CloudCollector)
+    collector.settings = settings
+    pod = saved["context"]["pods"][0]
+    pod["created"] = time.time() - 1000
+    requests = []
+
+    def gmp(url, params):
+        requests.append(params)
+        return {
+            "status": "success",
+            "data": {
+                "result": [
+                    {
+                        "metric": {"namespace": pod["namespace"], "pod": pod["name"]},
+                        "values": [[int(time.time()), "1"]],
+                    }
+                ]
+            },
+        }
+
+    collector.get = gmp
+    result = collector.metrics(saved["pool"], saved)
+    assert all(p["step"] == 60 for p in requests)
+    assert any("sum by(namespace,pod)(rate(" in p["query"] and "[5m]" in p["query"] for p in requests)
+    assert result["cadence_seconds"] == 60
+    assert result["cpu_rate_window_seconds"] == 300
+    assert result["cpu_alignment_window_seconds"] is None
+
+
+@pytest.mark.parametrize("cadence", [60, 300])
+def test_native_alignment_records_actual_cpu_window(saved, settings, cadence):
+    import datetime
+    import time
+
+    settings.metric_cadence_seconds = cadence
+    collector = object.__new__(CloudCollector)
+    collector.settings = settings
+    pod = saved["context"]["pods"][0]
+    pod["created"] = time.time() - 1000
+    requests = []
+    collector.get = lambda *args: {"status": "success", "data": {"result": []}}
+
+    def native(url, field, params):
+        requests.append(params)
+        return [
+            {
+                "resource": {
+                    "labels": {
+                        "namespace_name": pod["namespace"],
+                        "pod_name": pod["name"],
+                    }
+                },
+                "points": [
+                    {
+                        "interval": {
+                            "endTime": datetime.datetime.fromtimestamp(
+                                int(time.time()), datetime.UTC
+                            ).isoformat()
+                        },
+                        "value": {"doubleValue": 1},
+                    }
+                ],
+            }
+        ]
+
+    collector.pages = native
+    result = collector.metrics(saved["pool"], saved)
+    assert {p["aggregation.alignmentPeriod"] for p in requests} == {f"{cadence}s"}
+    assert result["cadence_seconds"] == cadence
+    assert result["cpu_rate_window_seconds"] == cadence
+    assert result["cpu_alignment_window_seconds"] == cadence
+
+
+def test_metric_cadence_configuration_rejects_unsupported_values():
+    from optipool.config import Settings
+    from pydantic import ValidationError
+
+    assert Settings().metric_cadence_seconds == 300
+    for cadence in [0, 30, 120, "invalid"]:
+        with pytest.raises(ValidationError):
+            Settings(metric_cadence_seconds=cadence)

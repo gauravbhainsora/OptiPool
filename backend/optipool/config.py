@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
@@ -13,6 +14,7 @@ class Settings(BaseModel):
     project_allowlist: list[str] = Field(default_factory=list)
     environment: dict[str, str] = Field(default_factory=dict)
     pricing_mappings: dict[str, dict] = Field(default_factory=dict)
+    metric_cadence_seconds: Literal[60, 300] = 300
     min_metric_samples: int = Field(20, ge=1, le=100_000)
     min_reduction_observation_seconds: int = Field(86400, ge=1, le=864000)
     min_reduction_coverage: float = Field(0.9, ge=0, le=1)

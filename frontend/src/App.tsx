@@ -211,12 +211,16 @@ export default function App() {
   async function refresh(kind: "pool" | "inventory") {
     setError("");
     try {
-      setJob(
-        await api<Job>(
-          `/refresh/${kind}${kind === "pool" ? `?${params({ pool_id: poolId })}` : ""}`,
-          { method: "POST", body: "{}" },
-        ),
+      const next = await api<Job>(
+        `/refresh/${kind}${kind === "pool" ? `?${params({ pool_id: poolId })}` : ""}`,
+        { method: "POST", body: "{}" },
       );
+      setJob(next);
+      if (["succeeded", "failed"].includes(next.state)) {
+        await loadInventory();
+        setGeneration((v) => v + 1);
+        if (next.error) setError(next.error);
+      }
     } catch (e) {
       setError((e as Error).message);
     }
@@ -969,6 +973,10 @@ function Workloads({
           observations: {snapshot.usage.resource_status.memory}
         </span>
       </div>
+      <p className="muted">
+        Sampled peaks can miss short spikes. Finer query cadence does not remove
+        the CPU rate window.
+      </p>
       {snapshot.usage.fallback_reason && (
         <Notice>{snapshot.usage.fallback_reason}</Notice>
       )}
@@ -1005,6 +1013,7 @@ function Workloads({
                 <th>Pool requests</th>
                 <th>Highest-replica p99 CPU</th>
                 <th>Highest-replica p99 memory</th>
+                <th>Sampled memory peak</th>
                 <th>Services</th>
               </tr>
             </thead>
@@ -1048,7 +1057,7 @@ function Workloads({
                         {w.kind !== "Deployment"
                           ? `Workload type: ${w.kind}`
                           : m
-                            ? `${m.replicas_observed} replicas observed`
+                            ? `${m.replicas_observed} replicas observed · ${m.historical_replicas_observed ?? 0} historical`
                             : "No attributable history"}
                       </small>
                       {w.kind === "Deployment" && (
@@ -1083,6 +1092,12 @@ function Workloads({
                           />
                         </details>
                       )}
+                    </td>
+                    <td title={m?.memory_peak_replica ?? undefined}>
+                      {w.kind === "Deployment"
+                        ? gib(m?.memory_peak)
+                        : "Inspect Pod metrics"}
+                      <small>Highest observed replica sample</small>
                     </td>
                     <td>
                       {w.services.length ? (

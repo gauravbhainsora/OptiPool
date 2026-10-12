@@ -181,7 +181,10 @@ def test_json_boundary_and_invalid_manifest(settings):
         )
 
 
-def test_saved_source_metadata_reaches_authenticated_api_and_exports_without_reads(settings, monkeypatch):
+@pytest.mark.parametrize("memory_burst", [False, True])
+def test_saved_source_metadata_reaches_authenticated_api_and_exports_without_reads(
+    settings, monkeypatch, memory_burst
+):
     import json
 
     import jwt
@@ -227,8 +230,25 @@ def test_saved_source_metadata_reaches_authenticated_api_and_exports_without_rea
                 resource_status={"cpu": "available", "memory": "unavailable"},
                 fallback_reason="Native query failed; selected validated GMP partial observations",
             )
-            for point in snapshot["metrics"]["samples"]:
-                point.pop("memory", None)
+            if memory_burst:
+                pod = snapshot["context"]["pods"][0]
+                cutoff = snapshot["metrics"]["cutoff"]
+                snapshot["metrics"]["resource_status"]["memory"] = "available"
+                snapshot["metrics"]["samples"] = [
+                    {
+                        "time": cutoff - i * 60,
+                        "replica": pod["uid"],
+                        "workload": pod["workload"],
+                        "attributed": True,
+                        "cpu": 0.1,
+                        "memory": (4 if i == 1 else 1) * 1024**3,
+                    }
+                    for i in range(201)
+                    if i != 100
+                ]
+            else:
+                for point in snapshot["metrics"]["samples"]:
+                    point.pop("memory", None)
             return snapshot
 
     collector = SourceCollector(settings)
@@ -239,7 +259,17 @@ def test_saved_source_metadata_reaches_authenticated_api_and_exports_without_rea
         for days in [1, 5, 10]:
             usage = client.get("/api/snapshot", params={"pool_id": pool["id"], "days": days}).json()["usage"]
             assert usage["cpu_rate_window_seconds"] == 300
-            assert usage["resource_status"] == {"cpu": "available", "memory": "unavailable"}
+            assert usage["resource_status"] == {
+                "cpu": "available",
+                "memory": "available" if memory_burst else "unavailable",
+            }
+            if memory_burst:
+                workload = next(iter(usage["workloads"].values()))
+                assert workload["memory_peak"] == 4 * 1024**3
+                assert workload["memory_p99"] == 1024**3
+                pod_metric = next(iter(usage["pods"].values()))
+                assert pod_metric["memory_expected_samples"] >= 1441
+                assert pod_metric["memory_coverage"] < 0.14
             assert usage["query_definition"]["memory_metric"] == "container_memory_working_set_bytes"
         for table in ["workloads", "pods"]:
             for fmt in ["csv", "xlsx"]:
@@ -251,6 +281,38 @@ def test_saved_source_metadata_reaches_authenticated_api_and_exports_without_rea
                     row = dict(zip(values[0], values[1], strict=True))
                 assert row["Metric source"] == "GMP cAdvisor"
                 assert str(row["CPU rate window seconds"]) == "300"
-                assert row["Memory observations"] == "unavailable"
+                assert row["Memory observations"] == ("available" if memory_burst else "unavailable")
+                assert str(row["Query cadence seconds"]) == "60"
+                if memory_burst:
+                    assert float(row["Sampled memory peak GiB"]) == 4
+                    percentile_key = (
+                        "Highest replica p99 memory GiB" if table == "workloads" else "Memory p99 GiB"
+                    )
+                    assert float(row[percentile_key]) == 1
                 assert row["Fallback reason"] == usage["fallback_reason"]
         assert collector.calls == before
+
+
+def test_saved_cadence_is_not_reinterpreted_after_config_change(settings):
+    class CadenceCollector(CountingCollector):
+        def collect(self, pool):
+            snapshot = super().collect(pool)
+            snapshot["metrics"]["cadence_seconds"] = self.settings.metric_cadence_seconds
+            return snapshot
+
+    collector = CadenceCollector(settings)
+    with TestClient(create_app(settings, collector)) as client:
+        pool = initialized(client)["pools"][0]
+        original = client.get("/api/snapshot", params={"pool_id": pool["id"], "days": 1}).json()
+        settings.metric_cadence_seconds = 60
+        job = client.post("/api/refresh/pool", params={"pool_id": pool["id"]}, json={}).json()
+        assert wait_job(client, job["id"])["state"] == "succeeded"
+        fresh = client.get("/api/snapshot", params={"pool_id": pool["id"], "days": 1}).json()
+        pinned = client.get(
+            "/api/snapshot", params={"pool_id": pool["id"], "days": 1, "snapshot_id": original["id"]}
+        ).json()
+        assert pinned["usage"]["cadence_seconds"] == 300
+        assert fresh["usage"]["cadence_seconds"] == 60
+        uid = next(iter(original["usage"]["pods"]))
+        assert pinned["usage"]["pods"][uid]["memory_expected_samples"] == 289
+        assert fresh["usage"]["pods"][uid]["memory_expected_samples"] == 1441
