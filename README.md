@@ -37,7 +37,7 @@ For development with frontend hot reloading, keep the API running and use `npm -
 
 Node-pool, workload and Pod tables export **CSV and Excel**, with snapshot provenance. Workload and Pod usage exports follow the selected window and displayed snapshot. No export initiates a cloud fetch.
 
-Choose a cluster and **All node pools** to combine its saved Nodes, Workloads and individual Pods. Capture times and metric cutoffs remain explicit per pool. Cluster workload/Pod CSV and Excel exports pin the displayed snapshots. Select an individual pool for live refresh, recommendations, comparisons and capacity planning. These selection changes are verified in the local post-0.2.0 checkout and are not included in the 0.2.0 release.
+Choose a cluster and **All node pools** to combine its saved Nodes, Workloads and individual Pods. Capture times and metric cutoffs remain explicit per pool. Cluster workload/Pod CSV and Excel exports pin the displayed snapshots. Select an individual pool for live refresh, recommendations, comparisons and capacity planning. These selection changes are verified and pushed to main; they are not included in the 0.2.0 release.
 
 Choose **Selected node pool** before estimating. The result names the target pool, cluster and project. The planner places proposed Pods only on that pool or new nodes using its saved configuration; it does not choose another pool automatically.
 
