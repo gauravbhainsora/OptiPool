@@ -143,6 +143,26 @@ class DemoCollector:
                             "memory": mem * 1024**3 * (0.32 + wave * 0.4) * (1 + (count - r) * 0.025),
                         }
                     )
+        risk_series = []
+        for pod in pods:
+            for kind, increment in [
+                ("throttled_periods", 1),
+                ("enforcement_periods", 100),
+                ("oom_events", 0),
+                ("restarts", 0),
+            ]:
+                risk_series.append(
+                    {
+                        "replica": pod["uid"],
+                        "workload": pod["workload"],
+                        "container": pod["spec"]["containers"][0]["name"],
+                        "identity": "synthetic-pod-lifetime",
+                        "kind": kind,
+                        "values": [
+                            [t, i * increment] for i, t in enumerate(range(now - 10 * 86400, now + 1, 1800))
+                        ],
+                    }
+                )
         templates = []
         for zone in pool["locations"]:
             n = deepcopy(nodes[0])
@@ -170,6 +190,12 @@ class DemoCollector:
                 "cadence_seconds": 1800,
                 "cutoff": now,
                 "samples": samples,
+                "risk": {
+                    "source": "Synthetic risk counters — not observed GCP evidence",
+                    "cadence_seconds": 1800,
+                    "series": risk_series,
+                    "warnings": [],
+                },
                 "source": "Synthetic fixtures",
                 "memory_definition": "Synthetic working set",
                 "coverage": "complete synthetic history",

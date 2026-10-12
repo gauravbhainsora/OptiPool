@@ -16,6 +16,25 @@ def evidence_columns(metric):
     columns = {}
     for resource, label in [("cpu", "CPU"), ("memory", "Memory")]:
         evidence = metric.get(resource + "_evidence") or {}
+        risk = metric.get(resource + "_risk") or {}
+        for field in [
+            "status",
+            "source",
+            "numerator",
+            "denominator",
+            "ratio",
+            "threshold",
+            "oom_events",
+            "restarts",
+            "counter_resets",
+            "represented_seconds",
+            "selected_window_coverage",
+            "required",
+            "eligible",
+        ]:
+            columns[f"{label} risk {field.replace('_', ' ')}"] = risk.get(field)
+        columns[f"{label} risk reasons"] = "; ".join(risk.get("reasons", []))
+        columns[f"{label} risk limitations"] = "; ".join(risk.get("limitations", []))
         for field, title in [
             ("valid_samples", "valid samples"),
             ("expected_samples", "expected samples"),

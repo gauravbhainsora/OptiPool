@@ -1,6 +1,8 @@
 import math
 from collections import defaultdict
 
+from .risk import attach_risk
+
 
 def percentile(values, p=0.99):
     values = sorted(v for v in values if math.isfinite(v))
@@ -94,7 +96,9 @@ def resource_evidence(times, pod, resource, metadata, start, cutoff, policy, poo
     }
 
 
-def summarize(snapshot, days, minimum=20, minimum_observation_seconds=86400, minimum_coverage=0.9):
+def summarize(
+    snapshot, days, minimum=20, minimum_observation_seconds=86400, minimum_coverage=0.9, risk_policy=None
+):
     cutoff = snapshot["metrics"]["cutoff"]
     start = cutoff - days * 86400
     cadence = snapshot["metrics"].get("cadence_seconds")
@@ -234,26 +238,30 @@ def summarize(snapshot, days, minimum=20, minimum_observation_seconds=86400, min
                     reasons.append(f"replica {member['uid']}: {reason}")
             evidence.update(partial=partial, eligible=not reasons, reasons=list(dict.fromkeys(reasons)))
             target[resource + "_evidence"] = evidence
-    return {
-        "days": days,
-        "start": start,
-        "cutoff": cutoff,
-        "workloads": workloads,
-        "pods": pod_metrics,
-        "timeline": [{"time": t, **v} for t, v in sorted(timeline.items())],
-        "source": snapshot["metrics"].get("source", "Unavailable"),
-        "memory_definition": snapshot["metrics"].get("memory_definition", "Unknown"),
-        "query_definition": snapshot["metrics"].get("query_definition"),
-        "units": snapshot["metrics"].get("units"),
-        "cpu_rate_window_seconds": snapshot["metrics"].get("cpu_rate_window_seconds"),
-        "cpu_alignment_window_seconds": snapshot["metrics"].get("cpu_alignment_window_seconds"),
-        "resource_status": snapshot["metrics"].get(
-            "resource_status", {"cpu": "unknown", "memory": "unknown"}
-        ),
-        "fallback_reason": snapshot["metrics"].get("fallback_reason"),
-        "coverage": snapshot["metrics"].get("coverage", "unavailable"),
-        "cadence_seconds": cadence,
-        "minimum_samples": minimum,
-        "reduction_policy": policy,
-        "warnings": warnings,
-    }
+    return attach_risk(
+        snapshot,
+        {
+            "days": days,
+            "start": start,
+            "cutoff": cutoff,
+            "workloads": workloads,
+            "pods": pod_metrics,
+            "timeline": [{"time": t, **v} for t, v in sorted(timeline.items())],
+            "source": snapshot["metrics"].get("source", "Unavailable"),
+            "memory_definition": snapshot["metrics"].get("memory_definition", "Unknown"),
+            "query_definition": snapshot["metrics"].get("query_definition"),
+            "units": snapshot["metrics"].get("units"),
+            "cpu_rate_window_seconds": snapshot["metrics"].get("cpu_rate_window_seconds"),
+            "cpu_alignment_window_seconds": snapshot["metrics"].get("cpu_alignment_window_seconds"),
+            "resource_status": snapshot["metrics"].get(
+                "resource_status", {"cpu": "unknown", "memory": "unknown"}
+            ),
+            "fallback_reason": snapshot["metrics"].get("fallback_reason"),
+            "coverage": snapshot["metrics"].get("coverage", "unavailable"),
+            "cadence_seconds": cadence,
+            "minimum_samples": minimum,
+            "reduction_policy": policy,
+            "warnings": warnings,
+        },
+        risk_policy,
+    )

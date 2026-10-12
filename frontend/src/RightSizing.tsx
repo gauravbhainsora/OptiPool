@@ -111,10 +111,12 @@ export default function RightSizing({ snapshot }: { snapshot: Snapshot }) {
                         <MetricEvidence
                           resource="CPU"
                           evidence={r.cpu_evidence}
+                          risk={r.cpu_risk}
                         />
                         <MetricEvidence
                           resource="Memory"
                           evidence={r.memory_evidence}
+                          risk={r.memory_risk}
                         />
                         <ul>
                           {r.warnings.map((w) => (

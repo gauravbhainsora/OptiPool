@@ -13,6 +13,15 @@ live_validation_complete: false
 min_metric_samples: 20
 min_reduction_observation_seconds: 86400
 min_reduction_coverage: 0.9
+# Query existing GMP risk counters only during explicit pool refresh. No scrape configuration changes.
+collect_risk_metrics: false
+# Optional existing cumulative OOM metric: uid/container labels, count across container restarts.
+risk_oom_counter_metric: ""
+require_cpu_risk_evidence: true
+require_memory_risk_evidence: true
+throttling_risk_threshold: 0.10
+min_risk_observation_seconds: 86400
+min_risk_coverage: 0.9
 max_added_nodes: 100
 max_replicas: 2000
 pricing_mappings: {}

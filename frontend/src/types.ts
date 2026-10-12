@@ -44,6 +44,8 @@ export type Workload = {
   spec: Record<string, unknown>;
 };
 export type Metric = {
+  cpu_risk?: Risk;
+  memory_risk?: Risk;
   cpu_evidence?: ResourceEvidence;
   memory_evidence?: ResourceEvidence;
   cpu_p99: number | null;
@@ -193,6 +195,8 @@ export type Estimate = {
 };
 
 export type PodMetric = {
+  cpu_risk?: Risk;
+  memory_risk?: Risk;
   cpu_evidence?: ResourceEvidence;
   memory_evidence?: ResourceEvidence;
   cpu_p99: number | null;
@@ -222,6 +226,8 @@ export type NodeBudget = {
   service_rejections?: Record<string, string[]>;
 };
 export type Recommendation = {
+  cpu_risk?: Risk;
+  memory_risk?: Risk;
   cpu_evidence?: ResourceEvidence;
   memory_evidence?: ResourceEvidence;
   reduction_eligible: { cpu: boolean; memory: boolean };
@@ -310,9 +316,13 @@ export type ClusterSnapshot = {
   > & {
     pools: (ScopeSource & {
       replicas: number;
+      cpu_risk?: Risk;
+      memory_risk?: Risk;
       cpu_evidence?: ResourceEvidence;
       memory_evidence?: ResourceEvidence;
     })[];
+    cpu_risk?: Risk;
+    memory_risk?: Risk;
     cpu_evidence?: ResourceEvidence;
     memory_evidence?: ResourceEvidence;
     cpu_p99: number | null;
@@ -321,4 +331,34 @@ export type ClusterSnapshot = {
     memory_complete: boolean;
     memory_definitions: string[];
   })[];
+};
+
+export type Risk = {
+  status: "available" | "unknown";
+  source: string;
+  required: boolean;
+  adverse: boolean;
+  eligible: boolean;
+  reasons: string[];
+  numerator: number | null;
+  denominator: number | null;
+  ratio: number | null;
+  threshold: number | null;
+  oom_events: number | null;
+  restarts: number | null;
+  represented_seconds: number | null;
+  selected_window_coverage: number | null;
+  limitations: string[];
+  containers: {
+    container: string;
+    replica?: string;
+    status: string;
+    adverse: boolean;
+    numerator: number | null;
+    denominator: number | null;
+    ratio: number | null;
+    oom_events: number | null;
+    restarts: number | null;
+    counter_resets: number | null;
+  }[];
 };

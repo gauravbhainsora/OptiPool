@@ -209,6 +209,7 @@ export default function ClusterView({
                                 <MetricEvidence
                                   resource="CPU"
                                   evidence={p.cpu_evidence}
+                                  risk={p.cpu_risk}
                                 />
                               </div>
                             ))}
@@ -239,6 +240,7 @@ export default function ClusterView({
                                 <MetricEvidence
                                   resource="Memory"
                                   evidence={p.memory_evidence}
+                                  risk={p.memory_risk}
                                 />
                               </div>
                             ))}
