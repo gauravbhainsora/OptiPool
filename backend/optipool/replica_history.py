@@ -35,6 +35,8 @@ def inventory_evidence(snapshot):
             "workload": p.get("workload"),
             "controller_uid": p.get("controller_uid"),
             "created": p.get("created"),
+            "spec": deepcopy(p.get("spec", {})),
+            "container_statuses": deepcopy(p.get("container_statuses", [])),
             "observed_at": now,
             "memberships": [
                 {
@@ -61,7 +63,10 @@ def merge_history(snapshot, previous, snapshot_id):
     retained_signature = None
     retained_metadata = None
     current = inventory_evidence(result)
-    current.update(deepcopy(metrics.get("replica_evidence", {})))
+    current = {
+        uid: {**current.get(uid, {}), **deepcopy(record)}
+        for uid, record in {**current, **metrics.get("replica_evidence", {})}.items()
+    }
     current_workloads = {w["id"]: w for w in result["workloads"]}
     rejected = set()
     rejected_pairs = {}
@@ -75,6 +80,8 @@ def merge_history(snapshot, previous, snapshot_id):
     for item, origin in [*previous, (result, snapshot_id)]:
         source_metrics = item["metrics"]
         records = source_metrics.get("replica_evidence", {}) if origin != snapshot_id else current
+        observed_records = inventory_evidence(item)
+        records = {uid: {**observed_records.get(uid, {}), **record} for uid, record in records.items()}
         source_workloads = {w["id"]: w for w in item.get("workloads", [])}
         for sample in source_metrics.get("samples", []):
             uid, timestamp = sample.get("replica"), sample.get("time")
@@ -262,4 +269,7 @@ def merge_history(snapshot, previous, snapshot_id):
         )
     else:
         metrics["coverage"] = "unavailable — no time-bounded attributable samples"
+    from .risk import retain_risk
+
+    retain_risk(result, previous, snapshot_id)
     return result

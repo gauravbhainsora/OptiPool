@@ -156,16 +156,18 @@ export default function PodTable({
                         {m?.memory_coverage == null
                           ? "unknown"
                           : `${Math.round(m.memory_coverage * 100)}% memory`}
-                        . CPU throttling history is not collected.
+                        .
                       </p>
                       <div className="table-wrap">
                         <MetricEvidence
                           resource="CPU"
                           evidence={m?.cpu_evidence}
+                          risk={m?.cpu_risk}
                         />
                         <MetricEvidence
                           resource="Memory"
                           evidence={m?.memory_evidence}
+                          risk={m?.memory_risk}
                         />
                         <table>
                           <thead>

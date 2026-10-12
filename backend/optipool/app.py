@@ -55,6 +55,7 @@ def create_app(settings=None, collector=None):
         settings.min_metric_samples,
         minimum_observation_seconds=settings.min_reduction_observation_seconds,
         minimum_coverage=settings.min_reduction_coverage,
+        risk_policy=settings.risk_policy(),
     )
 
     def source():

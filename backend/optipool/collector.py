@@ -373,6 +373,116 @@ class CloudCollector:
                     result["warnings"].append(
                         f"{resource.capitalize()} observations unavailable from selected source"
                     )
+        if self.settings.collect_risk_metrics:
+            try:
+                result["risk"] = self.risk_metrics(pool, pods, now)
+            except Exception as exc:
+                result["risk"] = {
+                    "source": "Unavailable",
+                    "series": [],
+                    "warnings": ["Optional risk collection unavailable: " + str(exc)[:200]],
+                }
+        return result
+
+    def risk_metrics(self, pool, pods, cutoff):
+        """Read only existing raw counters. Event sources must carry the captured Pod UID."""
+        result = {
+            "source": "GMP saved risk counters",
+            "cadence_seconds": 300,
+            "series": [],
+            "warnings": [],
+            "definitions": {
+                "throttled_periods": "container_cpu_cfs_throttled_periods_total",
+                "enforcement_periods": "container_cpu_cfs_periods_total",
+                "restarts": "kube_pod_container_status_restarts_total",
+                "oom_events": self.settings.risk_oom_counter_metric or "Unavailable",
+                "event_identity": "Pod UID/container lifetime; OOM source must accumulate across container restarts",
+            },
+        }
+        endpoint = f"https://monitoring.googleapis.com/v1/projects/{pool['project']}/location/global/prometheus/api/v1/query_range"
+        match = f'project_id="{pool["project"]}",location="{pool["location"]}",cluster="{pool["cluster"]}",container!="",container!="POD"'
+        names = defaultdict(list)
+        for namespace, name in pods:
+            names[namespace].append(name)
+        queries = []
+        for namespace, members in names.items():
+            for batch in metric_batches(members):
+                pattern = "|".join(re.escape(name) for name in batch)
+                scoped = match + ",namespace=" + json.dumps(namespace) + ",pod=~" + json.dumps(pattern)
+                for kind, metric in result["definitions"].items():
+                    if (
+                        kind in {"throttled_periods", "enforcement_periods", "restarts", "oom_events"}
+                        and metric != "Unavailable"
+                    ):
+                        queries.append((kind, metric + "{" + scoped + "}"))
+
+        def read(query):
+            kind, expression = query
+            try:
+                data = self.get(
+                    endpoint, {"query": expression, "start": cutoff - 10 * 86400, "end": cutoff, "step": 300}
+                )
+                if (
+                    data.get("status") != "success"
+                    or data.get("data", {}).get("resultType", "matrix") != "matrix"
+                    or not isinstance(data.get("data", {}).get("result"), list)
+                ):
+                    raise ValueError("Invalid risk counter response")
+                collected = []
+                for item in data["data"]["result"]:
+                    labels = item["metric"]
+                    pod = pods.get((labels.get("namespace"), labels.get("pod")))
+                    if not pod:
+                        continue
+                    container = labels.get("container")
+                    eligible = [c["name"] for c in pod["spec"].get("containers", [])] + [
+                        c["name"]
+                        for c in pod["spec"].get("initContainers", [])
+                        if c.get("restartPolicy") == "Always"
+                    ]
+                    if container not in eligible:
+                        continue
+                    if kind in {"oom_events", "restarts"}:
+                        if labels.get("uid") != pod["uid"]:
+                            continue
+                        identity = "pod:" + pod["uid"]
+                    else:
+                        # Preserve source/container-generation labels so resets are handled
+                        # within one series before any container/replica aggregation.
+                        identity = json.dumps(
+                            {k: v for k, v in labels.items() if k != "__name__"}, sort_keys=True
+                        )
+                    values = []
+                    for t, v in item["values"]:
+                        t, v = float(t), float(v)
+                        if not math.isfinite(t) or not math.isfinite(v) or v < 0:
+                            raise ValueError("Invalid risk counter observation")
+                        if max(cutoff - 10 * 86400, pod["created"]) <= t <= cutoff:
+                            values.append([t, v])
+                    if values:
+                        collected.append(
+                            dict(
+                                replica=pod["uid"],
+                                workload=pod["workload"],
+                                container=container,
+                                identity=identity,
+                                kind=kind,
+                                values=values,
+                            )
+                        )
+                return collected, None
+            except Exception as exc:
+                label = "OOM" if kind == "oom_events" else kind
+                return [], f"Optional {label} risk source unavailable: " + str(exc)[:200]
+
+        for collected, warning in parallel_reads(queries, read):
+            result["series"].extend(collected)
+            if warning:
+                result["warnings"].append(warning)
+        if not self.settings.risk_oom_counter_metric:
+            result["warnings"].append(
+                "Historical OOM counter source is not configured; OOM history is unknown"
+            )
         return result
 
     def describe_metrics(self, candidate, source, memory_definition):
