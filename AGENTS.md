@@ -8,12 +8,12 @@ Update `docs/BUILD_PLAN.md` after material implementation, requirement changes, 
 
 ### Issue tracker
 
-OptiPool work is tracked in GitHub Issues at `gauravbhainsora/OptiPool`. See `docs/agents/issue-tracker.md`.
+OptiPool work is tracked in GitHub Issues at `gauravbhainsora/OptiPool`. See `/Users/gaurav/Projects/home/docs/agents/github-issue-tracker.md`.
 
 ### Triage labels
 
-Use the five default roles: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+Use the five default roles: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `/Users/gaurav/Projects/home/docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-Use the single-context layout: root `GLOSSARY.md` and `docs/adr/`. See `docs/agents/domain.md`.
+Use the single-context layout: root `GLOSSARY.md` and `docs/adr/`. See `/Users/gaurav/Projects/home/docs/agents/domain.md`.
